@@ -1,0 +1,73 @@
+
+import torch
+from torch.distributed.fsdp import (
+    CPUOffloadPolicy,
+    MixedPrecisionPolicy,
+    fully_shard,
+)
+
+def FSDP2_mix_warpper(
+    model,
+    dp_mesh=None,
+    weight_dtype=torch.bfloat16,
+    main_block_to_half=None,
+    blocks_to_float=None,
+    reshard_after_forward=None,
+    cpu_offload=False,
+):
+    low_precision_policy = MixedPrecisionPolicy(
+        param_dtype=weight_dtype,
+        reduce_dtype=torch.float32,
+        output_dtype=weight_dtype,
+    )
+    high_precision_policy = MixedPrecisionPolicy(
+        param_dtype=torch.float32,
+        reduce_dtype=torch.float32,
+        output_dtype=weight_dtype,
+    )
+
+    fsdp_kwargs = {
+        "reshard_after_forward": reshard_after_forward,
+        "mesh": dp_mesh,
+    }  # dp_mesh is None means distributed to all nodes.
+
+    if cpu_offload:
+        fsdp_kwargs["offload_policy"] = CPUOffloadPolicy()
+
+    if blocks_to_float is not None and len(blocks_to_float) > 0:
+        for module in model.modules():
+            for block in blocks_to_float:
+                if isinstance(module, block):
+                    fully_shard(module, mp_policy=high_precision_policy, **fsdp_kwargs)
+    if main_block_to_half is not None:
+        for module in model.modules():
+            if isinstance(module, main_block_to_half):
+                fully_shard(module, mp_policy=low_precision_policy, **fsdp_kwargs)
+    fully_shard(model, mp_policy=low_precision_policy, **fsdp_kwargs)
+
+
+def FSDP2_fp32_warpper(
+    model,
+    dp_mesh=None,
+    main_block=None,
+    reshard_after_forward=None,
+    cpu_offload=False,
+):
+    fp32_precision_policy = MixedPrecisionPolicy(
+        param_dtype=torch.float32,
+        reduce_dtype=torch.float32,
+        output_dtype=torch.float32,
+    )
+    fsdp_kwargs = {
+        "reshard_after_forward": reshard_after_forward,
+        "mesh": dp_mesh,
+    }  # dp_mesh is None means distributed to all nodes.
+
+    if cpu_offload:
+        fsdp_kwargs["offload_policy"] = CPUOffloadPolicy()
+
+    if main_block is not None:
+        for module in model.modules():
+            if isinstance(module, main_block):
+                fully_shard(module, mp_policy=fp32_precision_policy, **fsdp_kwargs)
+    fully_shard(model, mp_policy=fp32_precision_policy, **fsdp_kwargs)

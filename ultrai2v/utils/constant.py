@@ -1,0 +1,6 @@
+VIDEO = 'video'
+IMAGE = 'image'
+VIDEO_MASK = 'video_mask'
+PROMPT_IDS = 'prompt_ids'
+PROMPT_MASK = 'prompt_mask'
+START_FRAME = 'start_frame'

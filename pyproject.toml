@@ -3,12 +3,9 @@ requires = ["setuptools>=61.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "wan"
-version = "2.1.0"
-description = "Wan: Open and Advanced Large-Scale Video Generative Models"
-authors = [
-    { name = "Wan Team", email = "wan.ai@alibabacloud.com" }
-]
+name = "ultrai2v"
+version = "1.0"
+description = "UltraI2V, based on wan"
 license = { file = "LICENSE.txt" }
 readme = "README.md"
 requires-python = ">=3.10,<4.0"
@@ -40,14 +37,6 @@ dev = [
     "mypy",
     "huggingface-hub[cli]"
 ]
-
-[project.urls]
-homepage = "https://wanxai.com"
-documentation = "https://github.com/Wan-Video/Wan2.1"
-repository = "https://github.com/Wan-Video/Wan2.1"
-huggingface = "https://huggingface.co/Wan-AI/"
-modelscope = "https://modelscope.cn/organization/Wan-AI"
-discord = "https://discord.gg/p5XbdQV7"
 
 [tool.setuptools]
 packages = ["wan"]

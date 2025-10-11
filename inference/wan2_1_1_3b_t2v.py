@@ -38,26 +38,6 @@ EXAMPLE_PROMPT = {
         "image":
             "examples/i2v_input.JPG",
     },
-    "flf2v-14B": {
-        "prompt":
-            "CG动画风格，一只蓝色的小鸟从地面起飞，煽动翅膀。小鸟羽毛细腻，胸前有独特的花纹，背景是蓝天白云，阳光明媚。镜跟随小鸟向上移动，展现出小鸟飞翔的姿态和天空的广阔。近景，仰视视角。",
-        "first_frame":
-            "examples/flf2v_input_first_frame.png",
-        "last_frame":
-            "examples/flf2v_input_last_frame.png",
-    },
-    "vace-1.3B": {
-        "src_ref_images":
-            'examples/girl.png,examples/snake.png',
-        "prompt":
-            "在一个欢乐而充满节日气氛的场景中，穿着鲜艳红色春服的小女孩正与她的可爱卡通蛇嬉戏。她的春服上绣着金色吉祥图案，散发着喜庆的气息，脸上洋溢着灿烂的笑容。蛇身呈现出亮眼的绿色，形状圆润，宽大的眼睛让它显得既友善又幽默。小女孩欢快地用手轻轻抚摸着蛇的头部，共同享受着这温馨的时刻。周围五彩斑斓的灯笼和彩带装饰着环境，阳光透过洒在她们身上，营造出一个充满友爱与幸福的新年氛围。"
-    },
-    "vace-14B": {
-        "src_ref_images":
-            'examples/girl.png,examples/snake.png',
-        "prompt":
-            "在一个欢乐而充满节日气氛的场景中，穿着鲜艳红色春服的小女孩正与她的可爱卡通蛇嬉戏。她的春服上绣着金色吉祥图案，散发着喜庆的气息，脸上洋溢着灿烂的笑容。蛇身呈现出亮眼的绿色，形状圆润，宽大的眼睛让它显得既友善又幽默。小女孩欢快地用手轻轻抚摸着蛇的头部，共同享受着这温馨的时刻。周围五彩斑斓的灯笼和彩带装饰着环境，阳光透过洒在她们身上，营造出一个充满友爱与幸福的新年氛围。"
-    }
 }
 
 
@@ -77,8 +57,6 @@ def _validate_args(args):
         args.sample_shift = 5.0
         if "i2v" in args.task and args.size in ["832*480", "480*832"]:
             args.sample_shift = 3.0
-        elif "flf2v" in args.task or "vace" in args.task:
-            args.sample_shift = 16
 
     # The default number of frames are 1 for text-to-image tasks and 81 for other tasks.
     if args.frame_num is None:
@@ -270,10 +248,7 @@ def generate(args):
     device = local_rank
     _init_logging(rank)
 
-    # if args.offload_model is None:
-    #     args.offload_model = False if world_size > 1 else True
-    #     logging.info(
-    #         f"offload_model is not specified, set to {args.offload_model}.")
+
     if world_size > 1:
         torch.cuda.set_device(local_rank)
         dist.init_process_group(
@@ -430,120 +405,6 @@ def generate(args):
             args.prompt,
             img,
             max_area=MAX_AREA_CONFIGS[args.size],
-            frame_num=args.frame_num,
-            shift=args.sample_shift,
-            sample_solver=args.sample_solver,
-            sampling_steps=args.sample_steps,
-            guide_scale=args.sample_guide_scale,
-            seed=args.base_seed,
-            offload_model=args.offload_model)
-    elif "flf2v" in args.task:
-        if args.prompt is None:
-            args.prompt = EXAMPLE_PROMPT[args.task]["prompt"]
-        if args.first_frame is None or args.last_frame is None:
-            args.first_frame = EXAMPLE_PROMPT[args.task]["first_frame"]
-            args.last_frame = EXAMPLE_PROMPT[args.task]["last_frame"]
-        logging.info(f"Input prompt: {args.prompt}")
-        logging.info(f"Input first frame: {args.first_frame}")
-        logging.info(f"Input last frame: {args.last_frame}")
-        first_frame = Image.open(args.first_frame).convert("RGB")
-        last_frame = Image.open(args.last_frame).convert("RGB")
-        if args.use_prompt_extend:
-            logging.info("Extending prompt ...")
-            if rank == 0:
-                prompt_output = prompt_expander(
-                    args.prompt,
-                    tar_lang=args.prompt_extend_target_lang,
-                    image=[first_frame, last_frame],
-                    seed=args.base_seed)
-                if prompt_output.status == False:
-                    logging.info(
-                        f"Extending prompt failed: {prompt_output.message}")
-                    logging.info("Falling back to original prompt.")
-                    input_prompt = args.prompt
-                else:
-                    input_prompt = prompt_output.prompt
-                input_prompt = [input_prompt]
-            else:
-                input_prompt = [None]
-            if dist.is_initialized():
-                dist.broadcast_object_list(input_prompt, src=0)
-            args.prompt = input_prompt[0]
-            logging.info(f"Extended prompt: {args.prompt}")
-
-        logging.info("Creating WanFLF2V pipeline.")
-        wan_flf2v = wan.WanFLF2V(
-            config=cfg,
-            checkpoint_dir=args.ckpt_dir,
-            device_id=device,
-            rank=rank,
-            t5_fsdp=args.t5_fsdp,
-            dit_fsdp=args.dit_fsdp,
-            use_usp=(args.ulysses_size > 1 or args.ring_size > 1),
-            t5_cpu=args.t5_cpu,
-        )
-
-        logging.info("Generating video ...")
-        video = wan_flf2v.generate(
-            args.prompt,
-            first_frame,
-            last_frame,
-            max_area=MAX_AREA_CONFIGS[args.size],
-            frame_num=args.frame_num,
-            shift=args.sample_shift,
-            sample_solver=args.sample_solver,
-            sampling_steps=args.sample_steps,
-            guide_scale=args.sample_guide_scale,
-            seed=args.base_seed,
-            offload_model=args.offload_model)
-    elif "vace" in args.task:
-        if args.prompt is None:
-            args.prompt = EXAMPLE_PROMPT[args.task]["prompt"]
-            args.src_video = EXAMPLE_PROMPT[args.task].get("src_video", None)
-            args.src_mask = EXAMPLE_PROMPT[args.task].get("src_mask", None)
-            args.src_ref_images = EXAMPLE_PROMPT[args.task].get(
-                "src_ref_images", None)
-
-        logging.info(f"Input prompt: {args.prompt}")
-        if args.use_prompt_extend and args.use_prompt_extend != 'plain':
-            logging.info("Extending prompt ...")
-            if rank == 0:
-                prompt = prompt_expander.forward(args.prompt)
-                logging.info(
-                    f"Prompt extended from '{args.prompt}' to '{prompt}'")
-                input_prompt = [prompt]
-            else:
-                input_prompt = [None]
-            if dist.is_initialized():
-                dist.broadcast_object_list(input_prompt, src=0)
-            args.prompt = input_prompt[0]
-            logging.info(f"Extended prompt: {args.prompt}")
-
-        logging.info("Creating VACE pipeline.")
-        wan_vace = wan.WanVace(
-            config=cfg,
-            checkpoint_dir=args.ckpt_dir,
-            device_id=device,
-            rank=rank,
-            t5_fsdp=args.t5_fsdp,
-            dit_fsdp=args.dit_fsdp,
-            use_usp=(args.ulysses_size > 1 or args.ring_size > 1),
-            t5_cpu=args.t5_cpu,
-        )
-
-        src_video, src_mask, src_ref_images = wan_vace.prepare_source(
-            [args.src_video], [args.src_mask], [
-                None if args.src_ref_images is None else
-                args.src_ref_images.split(',')
-            ], args.frame_num, SIZE_CONFIGS[args.size], device)
-
-        logging.info(f"Generating video...")
-        video = wan_vace.generate(
-            args.prompt,
-            src_video,
-            src_mask,
-            src_ref_images,
-            size=SIZE_CONFIGS[args.size],
             frame_num=args.frame_num,
             shift=args.sample_shift,
             sample_solver=args.sample_solver,
