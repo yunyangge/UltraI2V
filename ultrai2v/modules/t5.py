@@ -477,7 +477,8 @@ class T5EncoderModel:
         dtype=torch.bfloat16,
         device=torch.cuda.current_device(),
         checkpoint_path=None,
-        use_fsdp=False
+        use_fsdp=False,
+        device_mesh=None,
     ):
         self.text_len = text_len
         self.dtype = dtype
@@ -493,11 +494,12 @@ class T5EncoderModel:
         logging.info(f'loading text encoder from {checkpoint_path}')
         model.load_state_dict(torch.load(checkpoint_path, map_location='cpu'))
         if use_fsdp:
+            logging.info('use fsdp to shard t5 model')
             from torch.distributed.fsdp import fully_shard
             for module in model.modules():
                 if isinstance(module, T5SelfAttention):
-                    fully_shard(module)
-            fully_shard(model)
+                    fully_shard(module, mesh=device_mesh)
+            fully_shard(model, mesh=device_mesh)
         else:
             model = model.to(device)
         self.model = model

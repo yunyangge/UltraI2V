@@ -1,3 +1,4 @@
+import logging
 import numpy as np
 import random
 import torch
@@ -26,7 +27,10 @@ def set_seed(
             if not dist.is_initialized():
                 raise ValueError("`device_specific` can only be set to `True` when using distributed.")
             process_group = dist.group.WORLD
-        seed += dist.get_rank(process_group)
+        rank = dist.get_rank(process_group)
+        seed += rank
+        logging.info(f"Using device specific seed {seed} on rank {rank}")
+
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)

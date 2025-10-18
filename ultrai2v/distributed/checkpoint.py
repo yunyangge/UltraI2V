@@ -18,6 +18,7 @@ from torch.distributed.tensor import distribute_tensor, DTensor
 MODEL_CHECKPOINT = "model_state_dict.pt"
 OPTIM_CHECKPOINT = "optim_state_dict.pt"
 PARAMS = "params"
+PREFIX = "iter_"
 
 
 def get_latest_checkpoint_folder(path):
@@ -27,6 +28,7 @@ def get_latest_checkpoint_folder(path):
     for name in os.listdir(path):
         folder_path = os.path.join(path, name)
         if os.path.isdir(folder_path):
+            name = name.replace(PREFIX, "")
             try:
                 num = int(name)
                 if max_num is None or num > max_num:
@@ -48,16 +50,8 @@ class Checkpointer:
     @property
     def last_training_iteration(self):
         return self._last_training_iteration
-
-    def load_model(self, model: FSDPModule, ema: bool = False):
-        model_checkpoint = f"ema_{MODEL_CHECKPOINT}" if ema else MODEL_CHECKPOINT
-        last_model_checkpoint = (
-            f"{self.save_root_dir}/{self.last_training_iteration:09d}/{model_checkpoint}"
-        )
-        print(f'resume last_model_checkpoint from {last_model_checkpoint}')
-        full_sd = torch.load(
-            last_model_checkpoint, mmap=True, weights_only=True, map_location="cpu"
-        )
+    
+    def load_state_dict(self, model: FSDPModule, full_sd: dict):
         if self.dcp_api:
             set_model_state_dict(
                 model=model,
@@ -80,10 +74,30 @@ class Checkpointer:
             sharded_sd[param_name] = nn.Parameter(sharded_tensor)
         # choose `assign=True` since we cannot call `copy_` on meta tensor
         model.load_state_dict(sharded_sd, strict=False, assign=True)
+    
+    def load_model_from_path(self, model: FSDPModule, model_path: str):
+        print(f'load model from {model_path}')
+        full_sd = torch.load(
+            model_path, mmap=True, weights_only=True, map_location="cpu"
+        )
+        self.load_state_dict(model, full_sd)
+        del full_sd
+
+    def load_model(self, model: FSDPModule, ema: bool = False):
+        model_checkpoint = f"ema_{MODEL_CHECKPOINT}" if ema else MODEL_CHECKPOINT
+        last_model_checkpoint = (
+            f"{self.save_root_dir}/{PREFIX}{self.last_training_iteration:09d}/{model_checkpoint}"
+        )
+        print(f'resume last_model_checkpoint from {last_model_checkpoint}')
+        full_sd = torch.load(
+            last_model_checkpoint, mmap=True, weights_only=True, map_location="cpu"
+        )
+        self.load_state_dict(model, full_sd)
+        del full_sd
 
     def load_optim(self, model: FSDPModule, opt: torch.optim.Optimizer):
         last_optim_checkpoint = (
-            f"{self.save_root_dir}/{self.last_training_iteration:09d}/{OPTIM_CHECKPOINT}"
+            f"{self.save_root_dir}/{PREFIX}{self.last_training_iteration:09d}/{OPTIM_CHECKPOINT}"
         )
         print(f'resume last_optim_checkpoint from {last_optim_checkpoint}')
         full_sd = torch.load(
@@ -135,6 +149,7 @@ class Checkpointer:
                 "state": state,
             }
         )
+        del full_sd
 
     def _get_full_model_state_dict(self, model: FSDPModule):
         if self.dcp_api:
@@ -203,7 +218,7 @@ class Checkpointer:
         model_state_dict = self._get_full_model_state_dict(model)
         optim_state_dict = self._get_full_optimizer_state_dict(model, optim)
         if torch.distributed.get_rank() == 0:
-            new_training_iteration = f"{iteration:09d}"
+            new_training_iteration = f"{PREFIX}{iteration:09d}"
             new_checkpoint_folder = f"{self.save_root_dir}/{new_training_iteration}"
             new_model_checkpoint = f"{new_checkpoint_folder}/{MODEL_CHECKPOINT}"
             new_optim_checkpoint = f"{new_checkpoint_folder}/{OPTIM_CHECKPOINT}"
@@ -214,7 +229,7 @@ class Checkpointer:
     def save_ema_model(self, ema_model: FSDPModule, iteration: int):
         model_state_dict = self._get_full_model_state_dict(ema_model)
         if torch.distributed.get_rank() == 0:
-            new_training_iteration = f"{iteration:09d}"
+            new_training_iteration = f"{PREFIX}{iteration:09d}"
             new_checkpoint_folder = f"{self.save_root_dir}/{new_training_iteration}"
             new_model_checkpoint = f"{new_checkpoint_folder}/ema_{MODEL_CHECKPOINT}"
             os.makedirs(new_checkpoint_folder, exist_ok=True)

@@ -322,6 +322,7 @@ class WanModel(ModelMixin, ConfigMixin):
         qk_norm=True,
         cross_attn_norm=True,
         eps=1e-6,
+        **kwargs,
     ):
         r"""
         Initialize the diffusion model backbone.
@@ -540,8 +541,8 @@ if __name__ == "__main__":
     device = "cuda:0"
     dtype = torch.bfloat16
     model = WanModel().to(device=device, dtype=dtype)
-    model.set_gradient_checkpointing(True)
-    x = torch.randn(2, 16, 16, 64, 64, device=device, dtype=dtype)
+    # model.set_gradient_checkpointing(True)
+    x = torch.randn(2, 16, 21, 60, 104, device=device, dtype=dtype)
     t = torch.randint(0, 1000, (2,), device=device)
     context = torch.randn(2, 512, 4096, device=device, dtype=dtype)
     with torch.autocast("cuda", dtype=dtype):

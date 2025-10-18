@@ -19,3 +19,6 @@ def params_nums_to_str(params_num):
         return f"{params_num / 1e3:.2f}K"
     else:
         return str(params_num)
+
+def get_memory_allocated():
+    return f"{torch.cuda.memory_allocated() / 1024**3:.2f}"  # GiB

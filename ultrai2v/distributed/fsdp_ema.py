@@ -36,7 +36,6 @@ class FSDPEMAModel:
             else:
                 shadow_param.data.copy_(param)
 
-    @torch.no_grad()
     def ema_copy_to_model(self, model: FSDPModule):
         for name, param in model.named_parameters():
             shadow_param = self.shadow_params[name]
@@ -44,7 +43,6 @@ class FSDPEMAModel:
             assert isinstance(shadow_param, DTensor), f"{name}"
             param.data.copy_(shadow_param)
 
-    @torch.no_grad()
     def model_copy_to_ema(self, model: FSDPModule):
         for name, param in model.named_parameters():
             shadow_param = self.shadow_params[name]
@@ -52,12 +50,10 @@ class FSDPEMAModel:
             assert isinstance(shadow_param, DTensor), f"{name}"
             shadow_param.data.copy_(param)
 
-    @torch.no_grad()
     def store(self, model: FSDPModule):
         for name, param in model.named_parameters():
             self.backup[name] = param.clone().detach()
 
-    @torch.no_grad()
     def restore(self, model: FSDPModule):
         for name, param in model.named_parameters():
             assert name in self.backup

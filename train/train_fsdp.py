@@ -3,6 +3,7 @@ import yaml
 from tqdm import tqdm
 import torch
 import torch.distributed as dist
+from torch.distributed.device_mesh import init_device_mesh
 from argparse import ArgumentParser
 
 from ultrai2v.data import ultra_datasets, ultra_samplers, ultra_collators
@@ -25,11 +26,12 @@ from ultrai2v.schedulers import schedulers
 
 from ultrai2v.distributed.checkpoint import Checkpointer
 from ultrai2v.utils.constant import VIDEO, PROMPT_IDS, PROMPT_MASK
-from ultrai2v.utils.utils import str_to_precision, params_nums_to_str
+from ultrai2v.utils.utils import str_to_precision, params_nums_to_str, get_memory_allocated
 
 
 
 def main(config):
+    logger = get_logger()
     # config analysis
     seed = config.get("seed", 42)
 
@@ -48,7 +50,6 @@ def main(config):
 
     # training config
     training_iteration = config.get("training_iteration", 1000000)
-    dd
     gradient_checkpointing = config.get("gradient_checkpointing", False)
     gradient_accumulation_steps = config.get("gradient_accumulation_steps", 1)
     grad_norm_threshold = config.get("grad_norm_threshold", 1.0)
@@ -74,7 +75,12 @@ def main(config):
     device = torch.device(f"cuda:{rank}")
     weight_dtype = str_to_precision(weight_dtype)
 
-    logger = get_logger()
+    ddp_size = config.get("ddp_size", 1)
+    fsdp_size = config.get("fsdp_size", world_size // ddp_size)
+    device_mesh = init_device_mesh("cuda", (ddp_size, fsdp_size), mesh_dim_names=("ddp", "fsdp"))
+
+    log_on_main_process(logger, f"device_mesh: {device_mesh}")
+    print(f"rank {rank} use ddp mesh {device_mesh['ddp']} and fsdp mesh {device_mesh['fsdp']}")
 
     if rank == 0:
         os.makedirs(output_dir, exist_ok=True)
@@ -87,6 +93,7 @@ def main(config):
         dtype=str_to_precision(vae_config.get("dtype", "fp32")),
         device=device # for vae, we do not use fsdp
     )
+    log_on_main_process(logger, f"VAE model initialized, memory allocated: {get_memory_allocated()} GiB")
 
     log_on_main_process(logger, "Initializing text encoder model...")
     text_encoder = T5EncoderModel(
@@ -94,9 +101,10 @@ def main(config):
         dtype=text_encoder_config.get("dtype", weight_dtype),
         device=device, # when no fsdp, we init the text_encoder on gpu
         checkpoint_path=text_encoder_config.get("checkpoint_path", None),
-        use_fsdp=text_encoder_config.get("use_fsdp", False) # when using fsdp, we init the text_encoder on cpu, and use fsdp to shard the model to gpu
+        use_fsdp=text_encoder_config.get("use_fsdp", False), # when using fsdp, we init the text_encoder on cpu, and use fsdp to shard the model to gpu
+        device_mesh=device_mesh if text_encoder_config.get("use_fsdp", False) else None,
     )
-
+    log_on_main_process(logger, f"Text encoder model initialized, memory allocated: {get_memory_allocated()} GiB")
     # vae.to(device)
     # if not text_encoder_config.get("use_fsdp", False):
     #     text_encoder.to(device)
@@ -107,15 +115,18 @@ def main(config):
 
     scheduler = schedulers[scheduler_config.pop("scheduler_name", "flow_matching")](**scheduler_config)
 
-    if model_config.get("pretrained_model_dir", None) is not None:
-        checkpoint_dir = model_config.get("pretrained_model_dir")
-        model = models[model_name].from_pretrained(checkpoint_dir)
+    pretrained_model_dir_or_checkpoint = model_config.get("pretrained_model_dir_or_checkpoint", None)
+    if pretrained_model_dir_or_checkpoint is not None and os.path.isdir(pretrained_model_dir_or_checkpoint):
+        log_on_main_process(logger, f"Load model from pretrained_model_dir {pretrained_model_dir_or_checkpoint}")
+        model = models[model_name].from_pretrained(pretrained_model_dir_or_checkpoint)
     else:
+        log_on_main_process(logger, f"Init model from scratch")
         model = models[model_name](**model_config)
 
+    model.train()
     FSDP2_mix_warpper(
         model,
-        dp_mesh=None,
+        dp_mesh=device_mesh,
         weight_dtype=weight_dtype,
         main_block_to_half=models_main_block[model_name],
         blocks_to_float=models_blocks_to_float[model_name],
@@ -123,12 +134,15 @@ def main(config):
         cpu_offload=model_cpu_offload,
     )
 
+    log_on_main_process(logger, f"Diffusion model initialized, memory allocated: {get_memory_allocated()} GiB")
     if gradient_checkpointing:
+        log_on_main_process(logger, "Use gradient checkpointing to save memory")
         model.set_gradient_checkpointing(True)
 
+    log_on_main_process(logger, "Initializing ema model...")
     ema_model = EMAModel(model, decay=ema_decay, update_interval=ema_update_interval)
+    log_on_main_process(logger, f"EMA model initialized, memory allocated: {get_memory_allocated()} GiB")
 
-    model.train()
 
     if explicit_prefetching_num_blocks > 0:
         set_modules_to_forward_prefetch(model.blocks, num_to_forward_prefetch=explicit_prefetching_num_blocks)
@@ -139,14 +153,20 @@ def main(config):
         log_on_main_process(logger, "Loading model checkpoint...")
         checkpointer.load_model(model)
         log_on_main_process(logger, "Loading EMA model checkpoint...")
-        load_ema_model = model.clone()
-        checkpointer.load_model(load_ema_model, ema=True)
-        ema_model.model_copy_to_ema(load_ema_model)
+        ema_model.store(model)
+        checkpointer.load_model(model, ema=True)
+        ema_model.model_copy_to_ema(model)
+        ema_model.restore(model)
+    elif pretrained_model_dir_or_checkpoint is not None and os.path.isfile(pretrained_model_dir_or_checkpoint):
+        log_on_main_process(logger, f"Load model from pretrained_model_checkpoint {pretrained_model_dir_or_checkpoint}")
+        checkpointer.load_model_from_path(model, pretrained_model_dir_or_checkpoint)
+        log_on_main_process(logger, f"Load EMA model from pretrained_model_checkpoint {pretrained_model_dir_or_checkpoint}")
+        ema_model.model_copy_to_ema(model)
         
     log_on_main_process(logger, "Initializing and loading optimizer checkpoint...")
     optimizer = torch.optim.AdamW(
         model.parameters(),
-        optimizer_config.get("lr", 1e-4),
+        lr=optimizer_config.get("lr", 1e-4),
         betas=optimizer_config.get("betas", (0.9, 0.999)),
         weight_decay=optimizer_config.get("weight_decay", 1e-2),
         eps=optimizer_config.get("eps", 1e-15),
@@ -154,7 +174,9 @@ def main(config):
 
     if checkpointer.last_training_iteration is not None:
         checkpointer.load_optim(model, optimizer)
+
     current_iteration = 0 if checkpointer.last_training_iteration is None else checkpointer.last_training_iteration
+    current_batch_nums = current_iteration * gradient_accumulation_steps
 
     set_seed(seed, device_specific=True) # for training
     log_on_main_process(logger, "Initializing dataset, sampler and dataloader...")
@@ -180,7 +202,6 @@ def main(config):
 
     tqdm_bar = tqdm(total=training_iteration, disable=(rank != 0), initial=current_iteration, desc="Training")
     gathered_avg_loss = 0.0
-    current_batch_nums = current_iteration * gradient_accumulation_steps
     start_training_logs = f"""
     =============================Start Training=============================
     Before FSDP sharding,
@@ -188,6 +209,12 @@ def main(config):
     After FSDP sharding,
     Model has {params_nums_to_str(sum(p._local_tensor.numel() for p in model.parameters() if p.requires_grad))} trainable parameters
     world_size: {world_size} GPUs
+    Gradient checkpointing: {gradient_checkpointing}
+    Weight dtype: {weight_dtype}
+    Reshard after forward: {reshard_after_forward}
+    Model CPU offload: {model_cpu_offload}
+    EMA decay: {ema_decay} (update every {ema_update_interval} step)
+    Random seed: {seed}
     Training iterations: {training_iteration}
     Current iteration: {current_iteration}
     Batch size per GPU: {batch_size}
@@ -198,37 +225,39 @@ def main(config):
     =======================================================================
     """
     log_on_main_process(logger, start_training_logs)
+    optimizer.zero_grad()
     while current_iteration < training_iteration:
         for batch in dataloader:
             current_batch_nums += 1
             video = batch[VIDEO].to(dtype=torch.float32, device=device)
             prompt_ids = batch[PROMPT_IDS].to(device=device)
             prompt_mask = batch[PROMPT_MASK].to(device=device)
-
+            
             with torch.no_grad():
                 latents = vae.encode(video)
                 text_embeddings = text_encoder(prompt_ids, prompt_mask)
 
-            q_sample_results = scheduler.q_sample(latents, sigmas=None, prior_dist=None)
+            q_sample_results = scheduler.q_sample(latents)
             interpolated_latents = q_sample_results["x_t"]
             prior_dist = q_sample_results["prior_dist"]
             sigmas = q_sample_results["sigmas"]
             timesteps = q_sample_results["timesteps"]
-            # with torch.autocast("cuda", dtype=weight_dtype):
-            model_output = model(
-                interpolated_latents.to(weight_dtype),
-                timesteps,
-                text_embeddings,
-            )
+            with torch.autocast("cuda", dtype=weight_dtype):
+                model_output = model(
+                    interpolated_latents.to(weight_dtype),
+                    timesteps,
+                    text_embeddings,
+                )
 
             loss = scheduler.training_losses(model_output, latents, prior_dist)[0]
             loss = loss / gradient_accumulation_steps # default value of gradient_accumulation_steps is 1
             loss.backward()
-            loss_for_log = loss.detach().clone().unsqueeze(0)
+            loss_for_log = loss.clone().detach().unsqueeze(0)
             gathered_loss = gather_data_from_all_ranks(loss_for_log, dim=0)
             gathered_avg_loss += gathered_loss.mean().item()
 
             if (current_batch_nums) % gradient_accumulation_steps == 0:
+                current_iteration += 1
                 if grad_norm_threshold > 0.0:
                     torch.nn.utils.clip_grad_norm_(model.parameters(), grad_norm_threshold)
                 optimizer.step()
@@ -243,10 +272,22 @@ def main(config):
                 if current_iteration % save_interval == 0 or current_iteration == training_iteration:
                     log_on_main_process(logger, f"Saving model checkpoint at iteration {current_iteration}...")
                     checkpointer.save(model, optimizer, current_iteration)
+                    ema_model.store(model)
+                    ema_model.ema_copy_to_model(model)
+                    checkpointer.save_ema_model(model, current_iteration)
+                    ema_model.restore(model)
                 
                 gathered_avg_loss = 0.0    
-                current_iteration += 1
 
+    end_training_logs = f"""
+    =============================End Training=============================
+    training iteration: {current_iteration}
+    consumed samples: {current_batch_nums * batch_size}
+    Model saved to {output_dir}
+    Training finished.
+    =======================================================================
+    """
+    log_on_main_process(logger, end_training_logs)
     cleanup_distributed_env()
 
 
