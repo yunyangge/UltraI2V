@@ -10,7 +10,7 @@ from ultrai2v.data import ultra_datasets, ultra_samplers, ultra_collators
 from torch.utils.data import DataLoader
 
 from ultrai2v.utils.log_utils import get_logger, log_on_main_process, verify_min_gpu_count
-from ultrai2v.utils.random import set_seed
+from UltraI2V.ultrai2v.utils.random_utils import set_seed
 from ultrai2v.distributed.utils import (
     setup_distributed_env, 
     cleanup_distributed_env, 

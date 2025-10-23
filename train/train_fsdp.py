@@ -11,7 +11,7 @@ from ultrai2v.data import ultra_datasets, ultra_samplers, ultra_collators
 from torch.utils.data import DataLoader
 
 from ultrai2v.utils.log_utils import get_logger, log_on_main_process, verify_min_gpu_count
-from ultrai2v.utils.random import set_seed
+from UltraI2V.ultrai2v.utils.random_utils import set_seed
 from ultrai2v.distributed.utils import (
     setup_distributed_env, 
     cleanup_distributed_env, 
@@ -36,6 +36,8 @@ from ultrai2v.schedulers import schedulers
 from ultrai2v.distributed.checkpoint import Checkpointer
 from ultrai2v.utils.constant import VIDEO, PROMPT_IDS, PROMPT_MASK
 from ultrai2v.utils.utils import str_to_precision, params_nums_to_str, get_memory_allocated
+from ultrai2v.utils.clip_grads import AdaptiveGradClipper
+from ultrai2v.utils.encoder_cache import EncoderCacheManager
 
 
 def main(config):
@@ -200,9 +202,11 @@ def main(config):
         weight_decay=optimizer_config.get("weight_decay", 1e-2),
         eps=optimizer_config.get("eps", 1e-15),
     )
+    adaptive_grad_clipper = AdaptiveGradClipper(init_max_grad_norm=grad_norm_threshold)
 
     if checkpointer.last_training_iteration is not None:
         checkpointer.load_optim(model, optimizer)
+        adaptive_grad_clipper.load(output_dir)
 
     current_iteration = 0 if checkpointer.last_training_iteration is None else checkpointer.last_training_iteration
     current_batch_nums = current_iteration * gradient_accumulation_steps
@@ -224,12 +228,12 @@ def main(config):
     
     # sampler
     batch_size = data_config.get("batch_size", 1)
-    dp_size = dp_group.size()
+    dp_size = dp_group.size() # we use encoder cache, so dp_size = world_size
     consumed_samples = current_iteration * batch_size * gradient_accumulation_steps * dp_size
     sampler = ultra_samplers[data_config.pop("sampler_name", "stateful_distributed")](
         dataset, 
-        num_replicas=dp_size,
-        rank=dist.get_rank(dp_group),
+        num_replicas=dist.get_world_size(),
+        rank=dist.get_rank(), # we use encoder cache, so rank in dp_group is same as global rank
         shuffle=data_config.get("shuffle", True),
         consumed_samples=consumed_samples,
         drop_last=data_config.get("drop_last", True),
@@ -244,11 +248,13 @@ def main(config):
         num_workers=data_config.get("num_workers", 16),
         pin_memory=data_config.get("pin_memory", True),
     )
+    encoder_cache_manager = EncoderCacheManager(tp_cp_group=cp_mesh.get_group() if use_context_parallel else None)
 
     tqdm_bar = tqdm(total=training_iteration, disable=(rank != 0), initial=current_iteration, desc="Training")
     gathered_avg_loss = 0.0
     start_training_logs = f"""
-    =============================Start Training=============================
+    {'=' * 20}Start Training{'=' * 20}
+    Model: {model_name}
     Before FSDP sharding,
     Model has {params_nums_to_str(sum(p.numel() for p in model.parameters() if p.requires_grad))} trainable parameters
     After FSDP sharding,
@@ -270,7 +276,7 @@ def main(config):
     Effective batch size (dp_size x batch_size x gradient_accumulation_steps): {dp_size * batch_size * gradient_accumulation_steps}
     Save model to {output_dir} every {save_interval} iterations
     Training ...
-    =======================================================================
+    {'=' * 20}{'=' * len('Start Training')}{'=' * 20}
     """
     log_on_main_process(logger, start_training_logs)
 
@@ -306,7 +312,7 @@ def main(config):
             if (current_batch_nums) % gradient_accumulation_steps == 0:
                 current_iteration += 1
                 if grad_norm_threshold > 0.0:
-                    torch.nn.utils.clip_grad_norm_(model.parameters(), grad_norm_threshold)
+                    adaptive_grad_clipper.adaptive_clip(model.parameters())
                 optimizer.step()
                 optimizer.zero_grad()
                 ema_model.update(model, current_iteration)
@@ -326,12 +332,12 @@ def main(config):
                 gathered_avg_loss = 0.0    
 
     end_training_logs = f"""
-    =============================End Training=============================
+    {'=' * 20}End Training{'=' * 20}
     training iteration: {current_iteration}
     consumed samples: {current_batch_nums * batch_size}
     Model saved to {output_dir}
     Training finished.
-    =======================================================================
+    {'=' * 20}{'=' * len('End Training')}{'=' * 20}
     """
     log_on_main_process(logger, end_training_logs)
     cleanup_distributed_env()
