@@ -87,8 +87,10 @@ if __name__ == "__main__":
     from torch.distributed.device_mesh import init_device_mesh
     from ultrai2v.modules.model import wan_model, wan_model_blocks_to_float, wan_model_main_block
     from ultrai2v.distributed.utils import setup_distributed_env, cleanup_distributed_env
+    from ultrai2v.utils.random_utils import set_seed
     
     setup_distributed_env()
+    set_seed(1024, device_specific=True)
 
     ddp_fsdp_mesh = init_device_mesh(
         "cuda",
@@ -96,20 +98,21 @@ if __name__ == "__main__":
         mesh_dim_names=("ddp", "fsdp"),
     )
     print("ddp_fsdp_mesh:", ddp_fsdp_mesh)
+    pretrained_model_dir = "/mnt/data2/Wan2.1-T2V-1.3B/"
 
     model_name = "wan_t2v"
     device = torch.device(f"cuda:{torch.cuda.current_device()}")
-    dtype = torch.bfloat16
+    dtype = torch.float32
 
     latents = torch.randn(1, 16, 16, 64, 64).to(device=device, dtype=dtype)
     text_embeddings = torch.randn(1, 512, 4096).to(device=device, dtype=dtype)
     timesteps = torch.randint(0, 1000, (1,)).to(device=device)
 
-    ddp_model = wan_model[model_name]().to(device=device, dtype=dtype)
-    ddp_model = torch.nn.parallel.DistributedDataParallel(ddp_model)
+    ddp_model = wan_model[model_name].from_pretrained(pretrained_model_dir)
+    ddp_model = torch.nn.parallel.DistributedDataParallel(ddp_model.to(device=device, dtype=dtype))
 
-    fsdp_model = wan_model[model_name]()
-    ddp_fsdp_model = wan_model[model_name]()
+    fsdp_model = wan_model[model_name].from_pretrained(pretrained_model_dir)
+    ddp_fsdp_model = wan_model[model_name].from_pretrained(pretrained_model_dir)
 
     FSDP2_mix_warpper(
         ddp_fsdp_model,
@@ -131,12 +134,13 @@ if __name__ == "__main__":
         cpu_offload=False,
     )
     with torch.no_grad():
-        with torch.autocast(device_type='cuda', dtype=dtype):
-            fsdp_output = fsdp_model(latents, timesteps, text_embeddings)
-            ddp_output = ddp_model(latents, timesteps, text_embeddings)
-            ddp_fsdp_output = ddp_fsdp_model(latents, timesteps, text_embeddings)
-    print("fsdp_output - ddp_output MSE:", 1000 * torch.mean((fsdp_output.float() - ddp_output.float()) ** 2))
-    print("fsdp_output - ddp_fsdp_output MSE:", 1000 * torch.mean((fsdp_output.float() - ddp_fsdp_output.float()) ** 2))
-    print("ddp_output - ddp_fsdp_output MSE:", 1000 * torch.mean((ddp_output.float() - ddp_fsdp_output.float()) ** 2))
+        fsdp_output = fsdp_model(latents, timesteps, text_embeddings)
+        ddp_output = ddp_model(latents, timesteps, text_embeddings)
+        ddp_fsdp_output = ddp_fsdp_model(latents, timesteps, text_embeddings)
+    if torch.distributed.get_rank() == 0:
+        print(f"rank = {torch.distributed.get_rank()}, ddp_output[0, :10, 0]: {ddp_output[0, :10, 0]}, fsdp_output[0, :10, 0]: {fsdp_output[0, :10, 0]}, ddp_fsdp_output[0, :10, 0]: {ddp_fsdp_output[0, :10, 0]}")
+        print("fsdp_output - ddp_output MSE:", torch.mean((fsdp_output.float() - ddp_output.float()) ** 2))
+        print("fsdp_output - ddp_fsdp_output MSE:", torch.mean((fsdp_output.float() - ddp_fsdp_output.float()) ** 2))
+        print("ddp_output - ddp_fsdp_output MSE:", torch.mean((ddp_output.float() - ddp_fsdp_output.float()) ** 2))
 
     cleanup_distributed_env()
