@@ -5,6 +5,11 @@ from torch.distributed.fsdp import (
     MixedPrecisionPolicy,
     fully_shard,
 )
+from ultrai2v.utils.utils import is_npu_available
+if is_npu_available():
+    import torch_npu
+    from torch_npu.contrib import transfer_to_npu
+    torch_npu.npu.config.allow_internal_format = False
 
 def FSDP2_mix_warpper(
     model,
@@ -98,7 +103,10 @@ if __name__ == "__main__":
         mesh_dim_names=("ddp", "fsdp"),
     )
     print("ddp_fsdp_mesh:", ddp_fsdp_mesh)
-    pretrained_model_dir = "/mnt/data2/Wan2.1-T2V-1.3B/"
+    if not is_npu_available():
+        pretrained_model_dir = "/mnt/data2/Wan2.1-T2V-1.3B/"
+    else:
+        pretrained_model_dir = "/work/share1/checkpoint/Wan-AI/Wan2.1-T2V-1.3B/"
 
     model_name = "wan_t2v"
     device = torch.device(f"cuda:{torch.cuda.current_device()}")

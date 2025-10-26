@@ -3,6 +3,11 @@ import torch
 import torch.nn as nn
 from torch.distributed.tensor.parallel import parallelize_module
 from torch.distributed.device_mesh import DeviceMesh
+from ultrai2v.utils.utils import is_npu_available
+if is_npu_available():
+    import torch_npu
+    from torch_npu.contrib import transfer_to_npu
+    torch_npu.npu.config.allow_internal_format = False
 
 def CP_warpper(model: nn.Module, all_cp_plans: dict, cp_mesh: DeviceMesh):
     is_rank_zero = torch.distributed.get_rank() == 0
@@ -35,7 +40,10 @@ if __name__ == "__main__":
         (2, 4),
         mesh_dim_names=("ddp", "cp"),
     )
-    pretrained_model_dir = "/mnt/data2/Wan2.1-T2V-1.3B/"
+    if not is_npu_available():
+        pretrained_model_dir = "/mnt/data2/Wan2.1-T2V-1.3B/"
+    else:
+        pretrained_model_dir = "/work/share1/checkpoint/Wan-AI/Wan2.1-T2V-1.3B/"
     print("ddp_cp_mesh:", ddp_cp_mesh)
     set_seed(1024, device_specific=True, process_group=ddp_cp_mesh["ddp"].get_group())
 
@@ -57,7 +65,7 @@ if __name__ == "__main__":
     with torch.no_grad():
         ddp_output = ddp_model(latents, timesteps, text_embeddings)
         cp_output = cp_model(latents, timesteps, text_embeddings)
-    print(f"rank = {torch.distributed.get_rank()}, ddp_output[0, :10, 0]: {ddp_output[0, :10, 0]}, cp_output[0, :10, 0]: {ddp_output[0, :10, 0]}")
+    # print(f"rank = {torch.distributed.get_rank()}, ddp_output[0, :10, 0]: {ddp_output[0, :10, 0]}, cp_output[0, :10, 0]: {ddp_output[0, :10, 0]}")
     print("ddp_output - cp_output MSE:", torch.mean((ddp_output.float() - cp_output.float()) ** 2))
 
     cleanup_distributed_env()
