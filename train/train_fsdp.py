@@ -102,7 +102,7 @@ def main(config):
             project=project_name,
             name=wandb_config.get("exp_name", project_name),
             config=config,
-            dir=os.path.join(output_dir, "wandb")
+            dir=output_dir
         )
 
     # init fsdp config
