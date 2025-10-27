@@ -21,28 +21,6 @@ def _is_tensor_video_clip(clip):
     return True
 
 
-def center_crop_arr(pil_image, image_size):
-    """
-    Center cropping implementation from ADM.
-    """
-    while min(*pil_image.size) >= 2 * image_size:
-        pil_image = pil_image.resize(
-            tuple(x // 2 for x in pil_image.size), resample=Image.BOX
-        )
-
-    scale = image_size / min(*pil_image.size)
-    pil_image = pil_image.resize(
-        tuple(round(x * scale) for x in pil_image.size), resample=Image.BICUBIC
-    )
-
-    arr = np.array(pil_image)
-    crop_y = (arr.shape[0] - image_size) // 2
-    crop_x = (arr.shape[1] - image_size) // 2
-    return Image.fromarray(
-        arr[crop_y: crop_y + image_size, crop_x: crop_x + image_size]
-    )
-
-
 def to_tensor(clip):
     """
     Convert tensor data type from uint8 to float, divide value by 255.0 and
@@ -194,27 +172,6 @@ def resize_crop_to_fill(clip, target_size):
     return crop(clip, i, j, th, tw)
 
 
-def rand_size_crop_arr(pil_image, image_size):
-    """
-    Randomly crop image for height and width, ranging from image_size[0] to image_size[1]
-    """
-    arr = np.array(pil_image)
-
-    # get random target h w
-    height = random.randint(image_size[0], image_size[1])
-    width = random.randint(image_size[0], image_size[1])
-    # ensure that h w are factors of 8
-    height = height - height % 8
-    width = width - width % 8
-
-    # get random start pos
-    h_start = random.randint(0, max(len(arr) - height, 0))
-    w_start = random.randint(0, max(len(arr[0]) - height, 0))
-
-    # crop
-    return Image.fromarray(arr[h_start: h_start + height, w_start: w_start + width])
-
-
 def longsideresize(h, w, size, skip_low_resolution):
     if h <= size[0] and w <= size[1] and skip_low_resolution:
         return h, w
@@ -314,30 +271,6 @@ class AENorm:
         return self.__class__.__name__
 
 
-class CenterCropArr:
-    """
-    Apply a center crop to a PIL image.
-    """
-
-    def __init__(self, size=256):
-        self.size = size
-
-    def __call__(self, pil_image):
-        """
-        Apply the center crop to the input PIL image.
-
-        Args:
-            pil_image (PIL.Image): The input PIL image.
-
-        Returns:
-            PIL.Image: The center-cropped image.
-        """
-        return center_crop_arr(pil_image, self.size)
-
-    def __repr__(self) -> str:
-        return f"{self.__class__.__name__}(size={self.size})"
-
-
 class ResizeCropToFill:
     """
     Apply a resize crop to a PIL image.
@@ -376,12 +309,6 @@ class BaseCrop:
 class ResizeCrop(BaseCrop):
     def __call__(self, clip):
         clip = resize_crop_to_fill(clip, self.size)
-        return clip
-
-
-class RandSizeCropArr(BaseCrop):
-    def __call__(self, clip):
-        clip = rand_size_crop_arr(clip, self.size)
         return clip
 
 
@@ -637,7 +564,7 @@ class CenterCropResizeVideo:
         return clip_center_crop
 
     def __repr__(self) -> str:
-        return f"{self.__class__.__name__}(size={self.size}, interpolation_mode={self.interpolation_mode}"
+        return f"{self.__class__.__name__}(size={self.size}, interpolation_mode={self.interpolation_mode}, align_corners={self.align_corners}, antialias={self.antialias}"
     
 
 class ResizeVideo:

@@ -114,9 +114,10 @@ def main(config):
     dp_group = dist.group.WORLD # use default world group
     # init cp mesh if use context parallel
     cp_size = 1
+    use_context_parallel = use_context_parallel and config.get("cp_size", 1) > 1
     if use_context_parallel:
-        cp_size = config.get("cp_size", fsdp_size)
         # cp size == model parallel (FSDP) size
+        cp_size = config.get("cp_size", fsdp_size)
         if cp_size == fsdp_size:
             cp_mesh = ddp_fsdp_mesh["fsdp"]
             dp_group = ddp_fsdp_mesh["ddp"].get_group()
@@ -226,11 +227,13 @@ def main(config):
         ema_model.model_copy_to_ema(model)
         
     log_on_main_process(logger, "Initializing and loading optimizer checkpoint...")
+    learning_rate = optimizer_config.get("lr", 1e-4)
+    weight_decay = optimizer_config.get("weight_decay", 1e-2)
     optimizer = torch.optim.AdamW(
         model.parameters(),
-        lr=optimizer_config.get("lr", 1e-4),
+        lr=learning_rate,
         betas=optimizer_config.get("betas", (0.9, 0.999)),
-        weight_decay=optimizer_config.get("weight_decay", 1e-2),
+        weight_decay=weight_decay,
         eps=optimizer_config.get("eps", 1e-15),
     )
     log_on_main_process(logger, "Initializing adaptive gradient clipping...")
@@ -305,6 +308,8 @@ def main(config):
     Random seed: {seed}
     Training iterations: {training_iteration}
     Current iteration: {current_iteration}
+    Initial learning rate: {learning_rate}
+    Weight decay: {weight_decay}
     Batch size per GPU: {batch_size}
     Gradient accumulation steps: {gradient_accumulation_steps}
     Effective batch size (dp_size x batch_size x gradient_accumulation_steps): {dp_size * batch_size * gradient_accumulation_steps}

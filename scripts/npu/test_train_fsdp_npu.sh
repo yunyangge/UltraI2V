@@ -1,6 +1,7 @@
 export WANDB_MODE="online"
 export WANDB_API_KEY="720d886d8c437c2142c88056a1eab8ef78d64a1f"
-wandb login --relogin $WANDB_API_KEY
+wandb login $WANDB_API_KEY
+
 
 export TOKENIZERS_PARALLELISM=false
 
@@ -26,6 +27,4 @@ torchrun \
   --master_addr=${MASTER_ADDR} \
   --master_port=${MASTER_PORT} \
   train/train_fsdp.py \
-  --config configs/train/test_train_fsdp.yaml
-
-# torchrun --nproc_per_node=8 --nnodes=1 ultrai2v/utils/encoder_cache.py
+  --config configs/train/npu/test_train_fsdp_npu.yaml

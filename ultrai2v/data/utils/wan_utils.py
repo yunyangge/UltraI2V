@@ -281,7 +281,7 @@ class WanVideoProcessor(AbstractDataProcessor):
         
         self.video_transforms = Compose(
             [
-                CenterCropResizeVideo(self.sample_height, self.sample_width, interpolation_mode='bicubic', align_corners=False, antialias=True),
+                CenterCropResizeVideo((self.sample_height, self.sample_width), interpolation_mode='bicubic', align_corners=False, antialias=True),
                 ToTensorAfterResize(),
                 AENorm()
             ]
@@ -357,7 +357,7 @@ class WanImageProcessor(AbstractDataProcessor):
     
         self.image_transforms = Compose(
             [
-                CenterCropResizeVideo(self.sample_height, self.sample_width, interpolation_mode='bicubic', align_corners=False, antialias=True),
+                CenterCropResizeVideo((self.sample_height, self.sample_width), interpolation_mode='bicubic', align_corners=False, antialias=True),
                 ToTensorAfterResize(),
                 AENorm()
             ]

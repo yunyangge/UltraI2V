@@ -1,1 +1,0 @@
-python inference/wan2_1_1_3b_t2v.py  --task t2v-1.3B --size 832*480 --ckpt_dir /mnt/data/checkpoints/wan/Wan2.1-T2V-1.3B/ --prompt "Two anthropomorphic cats in comfy boxing gear and bright gloves fight intensely on a spotlighted stage."
