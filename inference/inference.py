@@ -4,6 +4,7 @@ import torch
 from argparse import ArgumentParser
 
 from torch.distributed.device_mesh import init_device_mesh
+from transformers import AutoTokenizer
 
 from ultrai2v.distributed.utils import setup_distributed_env, cleanup_distributed_env
 from ultrai2v.modules import (
@@ -88,6 +89,7 @@ def main(config):
     log_on_main_process(logger, f"VAE model initialized, memory allocated: {get_memory_allocated()} GiB")
 
     log_on_main_process(logger, "Initializing text encoder model...")
+    tokenizer = AutoTokenizer.from_pretrained(text_encoder_config.get("text_tokenizer_path", None))
     text_encoder = T5EncoderModel(
         text_len=text_encoder_config.get("text_len", 512),
         dtype=text_encoder_config.get("dtype", weight_dtype),
@@ -117,6 +119,15 @@ def main(config):
     if use_context_parallel and model.num_heads % cp_size != 0:
         raise ValueError(f"When using context parallel, num_heads {model.num_heads} mush be mutiple of cp_size {cp_size}!")
 
+    log_on_main_process(logger, f"Diffusion model initialized, memory allocated: {get_memory_allocated()} GiB")
+
+    pipeline = pipelines[pipeline_name](
+        vae=vae,
+        tokenizer=tokenizer,
+        text_encoder=text_encoder,
+        predictor=model,
+        scheduler=scheduler
+    )
 
 
     cleanup_distributed_env()

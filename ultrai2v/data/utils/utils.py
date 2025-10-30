@@ -15,6 +15,11 @@ from typing import List, Dict
 import urllib.parse as ul
 from bs4 import BeautifulSoup
 
+def cyclic_iter(dataloader):
+    while True:
+        for x in dataloader:
+            yield x
+
 def format_numel_str(numel: int) -> str:
     B = 1024 ** 3
     M = 1024 ** 2

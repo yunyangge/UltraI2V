@@ -15,9 +15,10 @@ import torch.distributed as dist
 from torch.distributed.device_mesh import init_device_mesh
 from argparse import ArgumentParser
 
-from ultrai2v.data import ultra_datasets, ultra_samplers, ultra_collators
 from torch.utils.data import DataLoader
 
+from ultrai2v.data import ultra_datasets, ultra_samplers, ultra_collators
+from ultrai2v.data.utils.utils import cyclic_iter
 from ultrai2v.utils.log_utils import get_logger, log_on_main_process, verify_min_gpu_count
 from ultrai2v.utils.random_utils import set_seed, get_seed_worker
 from ultrai2v.distributed.utils import (
@@ -320,76 +321,76 @@ def main(config):
     """
     log_on_main_process(logger, start_training_logs)
 
+    dataloader_iter = iter(cyclic_iter(dataloader)) # when one epoch is finished, this func with call __iter__ in sampler to produce next iter with different seed
     while current_iteration < training_iteration:
-        for batch in dataloader:
-            video = batch[VIDEO].to(dtype=torch.float32, device=device)
-            prompt_ids = batch[PROMPT_IDS].to(device=device)
-            prompt_mask = batch[PROMPT_MASK].to(device=device)
-            
-            if current_batch_nums % cp_size == 0:
-                with torch.no_grad():
-                    latents = vae.encode(video)
-                    text_embeddings = text_encoder(prompt_ids, prompt_mask)
-                    vae_latents_list, text_embeds_list = encoder_cache_manager(
-                        vae_latents_list=[latents],
-                        text_embeds_list=[text_embeddings],
-                        step=current_batch_nums
-                    )
-            else:
-                vae_latents_list, text_embeds_list = encoder_cache_manager(step=current_batch_nums)
-            latents = vae_latents_list[0]
-            text_embeddings = text_embeds_list[0]
-
-            current_batch_nums += 1
-
-            q_sample_results = scheduler.q_sample(latents)
-            interpolated_latents = q_sample_results["x_t"]
-            prior_dist = q_sample_results["prior_dist"]
-            sigmas = q_sample_results["sigmas"]
-            timesteps = q_sample_results["timesteps"]
-            with torch.autocast("cuda", dtype=weight_dtype):
-                model_output = model(
-                    interpolated_latents.to(weight_dtype),
-                    timesteps,
-                    text_embeddings,
+        if current_batch_nums % cp_size == 0:
+            batch = next(dataloader_iter)
+            video = batch.pop(VIDEO, None).to(dtype=torch.float32, device=device)
+            prompt_ids = batch.pop(PROMPT_IDS, None).to(device=device)
+            prompt_mask = batch.pop(PROMPT_MASK, None).to(device=device)
+            with torch.no_grad():
+                latents = vae.encode(video)
+                text_embeddings = text_encoder(prompt_ids, prompt_mask)
+                vae_latents_list, text_embeds_list = encoder_cache_manager(
+                    vae_latents_list=[latents],
+                    text_embeds_list=[text_embeddings],
+                    step=current_batch_nums
                 )
+        else:
+            vae_latents_list, text_embeds_list = encoder_cache_manager(step=current_batch_nums)
+        latents = vae_latents_list[0]
+        text_embeddings = text_embeds_list[0]
 
-            loss = scheduler.training_losses(model_output, latents, prior_dist)[0]
-            loss = loss / gradient_accumulation_steps # default value of gradient_accumulation_steps is 1
-            loss.backward()
-            loss_for_log = loss.clone().detach().unsqueeze(0)
-            gathered_loss = gather_data_from_all_ranks(loss_for_log, dim=0)
-            gathered_avg_loss += gathered_loss.mean().item()
-            if current_batch_nums % gradient_accumulation_steps == 0:
-                current_iteration += 1
-                grad_norm_after_clip = adaptive_grad_clipper.adaptive_clip(model.parameters())
-                # grad_norm_before_clip = torch.nn.utils.clip_grad_norm_(model.parameters(), init_max_grad_norm, foreach=False)
-                optimizer.step()
-                optimizer.zero_grad()
-                ema_model.update(model, current_iteration)
+        current_batch_nums += 1
 
-                if current_iteration % log_interval == 0:
-                    tqdm_bar.update(log_interval)
-                    tqdm_bar.set_postfix({"loss": gathered_avg_loss, "lr": optimizer.param_groups[0]['lr'], "grad_norm": grad_norm_after_clip.item()})
-                    if rank == 0 and wandb.run is not None:
-                        wandb_logs = {
-                            "train/loss": gathered_avg_loss,
-                            "train/lr": optimizer.param_groups[0]['lr'],
-                            "train/grad_norm": grad_norm_after_clip.item(),
-                        }
-                        wandb_logs.update(adaptive_grad_clipper.state_dict())
-                        wandb.log(wandb_logs, step=current_iteration)
+        q_sample_results = scheduler.q_sample(latents)
+        interpolated_latents = q_sample_results["x_t"]
+        prior_dist = q_sample_results["prior_dist"]
+        sigmas = q_sample_results["sigmas"]
+        timesteps = q_sample_results["timesteps"]
+        with torch.autocast("cuda", dtype=weight_dtype):
+            model_output = model(
+                interpolated_latents.to(weight_dtype),
+                timesteps,
+                text_embeddings,
+            )
 
-                if current_iteration % save_interval == 0 or current_iteration == training_iteration:
-                    log_on_main_process(logger, f"Saving model checkpoint at iteration {current_iteration}...")
-                    checkpointer.save(model, optimizer, current_iteration)
-                    ema_model.store(model)
-                    ema_model.ema_copy_to_model(model)
-                    checkpointer.save_ema_model(model, current_iteration)
-                    ema_model.restore(model)
-                    adaptive_grad_clipper.save(output_dir=f"{output_dir}/{checkpoint_prefix}{current_iteration:09d}")
-                
-                gathered_avg_loss = 0.0    
+        loss = scheduler.training_losses(model_output, latents, prior_dist)[0]
+        loss = loss / gradient_accumulation_steps # default value of gradient_accumulation_steps is 1
+        loss.backward()
+        loss_for_log = loss.clone().detach().unsqueeze(0)
+        gathered_loss = gather_data_from_all_ranks(loss_for_log, dim=0)
+        gathered_avg_loss += gathered_loss.mean().item()
+        if current_batch_nums % gradient_accumulation_steps == 0:
+            current_iteration += 1
+            grad_norm_after_clip = adaptive_grad_clipper.adaptive_clip(model.parameters())
+            # grad_norm_before_clip = torch.nn.utils.clip_grad_norm_(model.parameters(), init_max_grad_norm, foreach=False)
+            optimizer.step()
+            optimizer.zero_grad()
+            ema_model.update(model, current_iteration)
+
+            if current_iteration % log_interval == 0:
+                tqdm_bar.update(log_interval)
+                tqdm_bar.set_postfix({"loss": gathered_avg_loss, "lr": optimizer.param_groups[0]['lr'], "grad_norm": grad_norm_after_clip.item()})
+                if rank == 0 and wandb.run is not None:
+                    wandb_logs = {
+                        "train/loss": gathered_avg_loss,
+                        "train/lr": optimizer.param_groups[0]['lr'],
+                        "train/grad_norm": grad_norm_after_clip.item(),
+                    }
+                    wandb_logs.update(adaptive_grad_clipper.state_dict())
+                    wandb.log(wandb_logs, step=current_iteration)
+
+            if current_iteration % save_interval == 0 or current_iteration == training_iteration:
+                log_on_main_process(logger, f"Saving model checkpoint at iteration {current_iteration}...")
+                checkpointer.save(model, optimizer, current_iteration)
+                ema_model.store(model)
+                ema_model.ema_copy_to_model(model)
+                checkpointer.save_ema_model(model, current_iteration)
+                ema_model.restore(model)
+                adaptive_grad_clipper.save(output_dir=f"{output_dir}/{checkpoint_prefix}{current_iteration:09d}")
+            
+            gathered_avg_loss = 0.0    
 
     end_training_logs = f"""
     {'=' * 20}End Training{'=' * 20}

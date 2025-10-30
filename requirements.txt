@@ -17,3 +17,4 @@ numpy>=1.23.5,<2
 pyyaml
 lmdb
 zstandard
+wandb

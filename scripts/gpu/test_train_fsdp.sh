@@ -1,4 +1,4 @@
-export WANDB_MODE="online"
+export WANDB_MODE="offline"
 export WANDB_API_KEY="720d886d8c437c2142c88056a1eab8ef78d64a1f"
 wandb login --relogin $WANDB_API_KEY
 

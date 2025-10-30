@@ -95,7 +95,7 @@ if __name__ == "__main__":
     from ultrai2v.utils.random_utils import set_seed
     
     setup_distributed_env()
-    set_seed(1024, device_specific=True)
+    set_seed(1024, device_specific=False)
 
     ddp_fsdp_mesh = init_device_mesh(
         "cuda",
@@ -116,11 +116,17 @@ if __name__ == "__main__":
     text_embeddings = torch.randn(1, 512, 4096).to(device=device, dtype=dtype)
     timesteps = torch.randint(0, 1000, (1,)).to(device=device)
 
-    ddp_model = wan_model[model_name].from_pretrained(pretrained_model_dir)
+    # ddp_model = wan_model[model_name].from_pretrained(pretrained_model_dir)
+    set_seed(1024, device_specific=False)
+    ddp_model = wan_model[model_name]()
     ddp_model = torch.nn.parallel.DistributedDataParallel(ddp_model.to(device=device, dtype=dtype))
 
-    fsdp_model = wan_model[model_name].from_pretrained(pretrained_model_dir)
-    ddp_fsdp_model = wan_model[model_name].from_pretrained(pretrained_model_dir)
+    # fsdp_model = wan_model[model_name].from_pretrained(pretrained_model_dir)
+    set_seed(1024, device_specific=False)
+    fsdp_model = wan_model[model_name]()
+    # ddp_fsdp_model = wan_model[model_name].from_pretrained(pretrained_model_dir)
+    set_seed(1024, device_specific=False)
+    ddp_fsdp_model = wan_model[model_name]()
 
     FSDP2_mix_warpper(
         ddp_fsdp_model,

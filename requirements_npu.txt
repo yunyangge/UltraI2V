@@ -1,7 +1,6 @@
-torch==2.7.1
-torch_npu==2.7.1rc1
-torchvision==0.22.1 
-torchaudio==2.7.1
+torch==2.8.0
+torch_npu==2.8.0rc1
+torchvision==0.23.0
 opencv-python>=4.9.0.80
 diffusers>=0.31.0
 transformers>=4.49.0
