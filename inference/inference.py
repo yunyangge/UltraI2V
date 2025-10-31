@@ -39,12 +39,14 @@ def main(config):
 
     # inference config
     pipeline_name = config.get("pipeline_name", "t2v")
+    weight_dtype = config.get("weight_dtype", "bfloat16")
     prompt_txt = config.get("prompt_txt", None)
     batch_size = config.get("batch_size", 1)
     num_frames = config.get("num_frames", 49)
     height = config.get("height", 480)
     width = config.get("width", 832)
     save_fps = config.get("save_fps", 16)
+    use_context_parallel = config.get("use_context_parallel", False)
     reshard_after_forward = config.get("reshard_after_forward", None)
     model_cpu_offload = config.get("model_cpu_offload", False)
 
@@ -68,7 +70,9 @@ def main(config):
     logger.info(f"rank {rank} use ddp mesh {ddp_fsdp_mesh['ddp']} and fsdp mesh {ddp_fsdp_mesh['fsdp']}")
 
     # init cp mesh if use context parallel
+    dp_group = torch.distributed.group.WORLD
     cp_size = 1
+    cp_mesh = None
     use_context_parallel = use_context_parallel and config.get("cp_size", 1) > 1
     if use_context_parallel:
         # cp size == model parallel (FSDP) size
@@ -155,8 +159,12 @@ def main(config):
         prompts = f.readlines()
 
     dp_rank = torch.distributed.get_rank(dp_group)
-    cp_rank = torch.distributed.get_rank(cp_mesh.get_group())
-    cp_size = torch.distributed.get_world_size(cp_mesh.get_group())
+    if cp_mesh is not None:
+        cp_rank = torch.distributed.get_rank(cp_mesh.get_group()) 
+        cp_size = torch.distributed.get_world_size(cp_mesh.get_group())
+    else:
+        cp_rank = 0
+        cp_size = 1
     video_grid = []
     for index in range(dp_rank * batch_size, len(prompts), batch_size * world_size):
         batch_prompts = prompts[index: index + batch_size]
