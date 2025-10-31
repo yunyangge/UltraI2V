@@ -75,12 +75,13 @@ class Checkpointer:
         # choose `assign=True` since we cannot call `copy_` on meta tensor
         model.load_state_dict(sharded_sd, strict=False, assign=True)
     
-    def load_model_from_path(self, model: FSDPModule, model_path: str):
+    @classmethod
+    def load_model_from_path(cls, model: FSDPModule, model_path: str):
         print(f'load model from {model_path}')
         full_sd = torch.load(
             model_path, mmap=True, weights_only=True, map_location="cpu"
         )
-        self.load_state_dict(model, full_sd)
+        cls.load_state_dict(model, full_sd)
         del full_sd
 
     def load_model(self, model: FSDPModule, ema: bool = False):

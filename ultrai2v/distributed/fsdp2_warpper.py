@@ -1,12 +1,12 @@
 import torch
+from ultrai2v.utils.utils import is_npu_available, check_and_import_npu
+check_and_import_npu()
 import logging
 from torch.distributed.fsdp import (
     CPUOffloadPolicy,
     MixedPrecisionPolicy,
     fully_shard,
 )
-from ultrai2v.utils.utils import is_npu_available, check_and_import_npu
-check_and_import_npu()
 
 def FSDP2_mix_warpper(
     model,

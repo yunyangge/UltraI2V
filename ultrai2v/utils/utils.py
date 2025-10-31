@@ -59,8 +59,7 @@ def is_npu_available():
     return is_available
 
 def check_and_import_npu():
-    is_available = is_npu_available()
-    if is_available:
+    if is_npu_available():
         import torch_npu
         from torch_npu.contrib import transfer_to_npu
         torch_npu.npu.config.allow_internal_format = False

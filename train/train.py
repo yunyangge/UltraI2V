@@ -7,6 +7,7 @@ import wandb
 from ultrai2v.utils.utils import check_and_import_npu
 import torch
 check_and_import_npu()
+
 import torch.distributed as dist
 from torch.distributed.device_mesh import init_device_mesh
 from argparse import ArgumentParser
@@ -147,6 +148,8 @@ def main(config):
     )
     log_on_main_process(logger, f"VAE model initialized, memory allocated: {get_memory_allocated()} GiB")
 
+    torch.cuda.empty_cache()
+
     log_on_main_process(logger, "Initializing text encoder model...")
     text_encoder = T5EncoderModel(
         text_len=text_encoder_config.get("text_len", 512),
@@ -157,6 +160,8 @@ def main(config):
         device_mesh=ddp_fsdp_mesh if text_encoder_config.get("use_fsdp", False) else None,
     )
     log_on_main_process(logger, f"Text encoder model initialized, memory allocated: {get_memory_allocated()} GiB")
+
+    torch.cuda.empty_cache()
     # vae.to(device)
     # if not text_encoder_config.get("use_fsdp", False):
     #     text_encoder.to(device)
@@ -224,6 +229,8 @@ def main(config):
         checkpointer.load_model_from_path(model, pretrained_model_dir_or_checkpoint)
         log_on_main_process(logger, f"Load EMA model from pretrained_model_checkpoint {pretrained_model_dir_or_checkpoint}")
         ema_model.model_copy_to_ema(model)
+
+    torch.cuda.empty_cache()
         
     log_on_main_process(logger, "Initializing and loading optimizer checkpoint...")
     learning_rate = optimizer_config.get("lr", 1e-4)

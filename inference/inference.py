@@ -1,13 +1,13 @@
 import os
 import yaml
-import torch
 from argparse import ArgumentParser
+
+import torch
+from ultrai2v.utils.utils import check_and_import_npu
+check_and_import_npu()
 
 from torch.distributed.device_mesh import init_device_mesh
 from transformers import AutoTokenizer
-
-from ultrai2v.utils.utils import check_and_import_npu
-check_and_import_npu()
 
 from ultrai2v.distributed.utils import setup_distributed_env, cleanup_distributed_env, gather_tensor_list_to_one
 from ultrai2v.distributed.fsdp2_warpper import FSDP2_mix_warpper
@@ -102,6 +102,8 @@ def main(config):
     )
     log_on_main_process(logger, f"VAE model initialized, memory allocated: {get_memory_allocated()} GiB")
 
+    torch.cuda.empty_cache()
+
     log_on_main_process(logger, "Initializing text encoder model...")
     tokenizer = AutoTokenizer.from_pretrained(text_encoder_config.get("text_tokenizer_path", None))
     text_encoder = T5EncoderModel(
@@ -114,6 +116,8 @@ def main(config):
     )
     log_on_main_process(logger, f"Text encoder model initialized, memory allocated: {get_memory_allocated()} GiB")
 
+    torch.cuda.empty_cache()
+
     log_on_main_process(logger, "Initializing diffusion model and scheduler...")
 
     scheduler = schedulers[scheduler_config.pop("scheduler_name", "flow_matching")](**scheduler_config)
@@ -123,10 +127,8 @@ def main(config):
         log_on_main_process(logger, f"Load model from pretrained_model_dir {pretrained_model_dir_or_checkpoint}")
         model = models[model_name].from_pretrained(pretrained_model_dir_or_checkpoint)
     elif pretrained_model_dir_or_checkpoint is not None and os.path.isfile(pretrained_model_dir_or_checkpoint):
-        log_on_main_process(logger, f"Load model from pretrained_model_checkpoint {pretrained_model_dir_or_checkpoint}")
+        log_on_main_process(logger, f"Init model from scratch")
         model = models[model_name](**model_config)
-        checkpointer = Checkpointer(folder=output_dir, dcp_api=save_with_dcp_api)
-        checkpointer.load_model_from_path(model, pretrained_model_dir_or_checkpoint)
     else:
         raise ValueError(f"In inference mode, pretrained_model_dir_or_checkpoint must be specified!")
 
@@ -149,6 +151,12 @@ def main(config):
     )
 
     log_on_main_process(logger, f"Diffusion model initialized, memory allocated: {get_memory_allocated()} GiB")
+
+    if pretrained_model_dir_or_checkpoint is not None and os.path.isfile(pretrained_model_dir_or_checkpoint):
+        log_on_main_process(logger, f"Load model from pretrained_model_checkpoint {pretrained_model_dir_or_checkpoint}")
+        Checkpointer.load_model_from_path(model, pretrained_model_dir_or_checkpoint)
+
+    torch.cuda.empty_cache()
 
     pipeline = pipelines[pipeline_name](
         vae=vae,
