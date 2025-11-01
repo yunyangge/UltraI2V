@@ -17,7 +17,6 @@ from ultrai2v.utils.utils import is_npu_available
 
 from .attention import flash_attention, attention
 
-__all__ = ["WanModel"]
 
 T5_CONTEXT_TOKEN_NUMBER = 512
 
@@ -570,19 +569,23 @@ class WanModel(ModelMixin, ConfigMixin):
         nn.init.zeros_(self.head.head.weight)
 
 
-wan_model = {
+models = {
     "wan_t2v": WanModel
 }
 
-wan_model_main_block = {
+models_main_block = {
     "wan_t2v": WanAttentionBlock
 }
 
-wan_model_blocks_to_float = {
+models_blocks_to_float = {
     "wan_t2v": [WanLayerNorm, WanRMSNorm]
 }
 
-wan_cp_plan = {
+models_blocks_to_output_float = {
+    "wan_t2v": None
+}
+
+cp_plans = {
     "wan_t2v": {
         WanModel:{
             "cp_input_layer": PrepareModuleInput(

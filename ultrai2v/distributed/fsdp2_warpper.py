@@ -14,6 +14,7 @@ def FSDP2_mix_warpper(
     weight_dtype=torch.bfloat16,
     main_block_to_half=None,
     blocks_to_float=None,
+    blocks_to_output_float=None,
     reshard_after_forward=None,
     cpu_offload=False,
 ):
@@ -30,6 +31,11 @@ def FSDP2_mix_warpper(
         reduce_dtype=torch.float32,
         output_dtype=weight_dtype,
     )
+    fp32_precision_policy = MixedPrecisionPolicy(
+        param_dtype=torch.float32,
+        reduce_dtype=torch.float32,
+        output_dtype=torch.float32,
+    )
 
     fsdp_kwargs = {
         "reshard_after_forward": reshard_after_forward,
@@ -39,6 +45,14 @@ def FSDP2_mix_warpper(
     if cpu_offload:
         fsdp_kwargs["offload_policy"] = CPUOffloadPolicy()
 
+    if blocks_to_output_float is not None and len(blocks_to_output_float) > 0:
+        for module in model.modules():
+            for block in blocks_to_output_float:
+                if isinstance(module, block):
+                    if is_rank_zero:
+                        logging.info(f"FSDP {block} Module with All Float Precision to Output Float Results.")
+                    fully_shard(module, mp_policy=fp32_precision_policy, **fsdp_kwargs)
+
     if blocks_to_float is not None and len(blocks_to_float) > 0:
         for module in model.modules():
             for block in blocks_to_float:
@@ -46,17 +60,21 @@ def FSDP2_mix_warpper(
                     if is_rank_zero:
                         logging.info(f"FSDP {block} Module with High Precision.")
                     fully_shard(module, mp_policy=high_precision_policy, **fsdp_kwargs)
+
     if main_block_to_half is not None:
         for module in model.modules():
             if isinstance(module, main_block_to_half):
                 if is_rank_zero:
                     logging.info(f"FSDP {main_block_to_half} Module with Low Precision.")
                 fully_shard(module, mp_policy=low_precision_policy, **fsdp_kwargs)
+
     if is_rank_zero:
         logging.info(f"FSDP Other Modules.")
     fully_shard(model, mp_policy=low_precision_policy, **fsdp_kwargs)
+
     if is_rank_zero:
         logging.info("FSDP Down!")
+        logging.info(f"Model Overview: \n{model}")
 
 
 def FSDP2_fp32_warpper(
@@ -87,7 +105,7 @@ def FSDP2_fp32_warpper(
 
 if __name__ == "__main__":
     from torch.distributed.device_mesh import init_device_mesh
-    from ultrai2v.modules.model import wan_model, wan_model_blocks_to_float, wan_model_main_block
+    from ultrai2v.modules import models, models_blocks_to_float, models_main_block, models_cp_plan
     from ultrai2v.distributed.utils import setup_distributed_env, cleanup_distributed_env
     from ultrai2v.utils.random_utils import set_seed
     
@@ -96,7 +114,7 @@ if __name__ == "__main__":
 
     ddp_fsdp_mesh = init_device_mesh(
         "cuda",
-        (8, 1),
+        (4, 1),
         mesh_dim_names=("ddp", "fsdp"),
     )
     print("ddp_fsdp_mesh:", ddp_fsdp_mesh)
@@ -105,32 +123,34 @@ if __name__ == "__main__":
     else:
         pretrained_model_dir = "/work/share1/checkpoint/Wan-AI/Wan2.1-T2V-1.3B/"
 
-    model_name = "wan_t2v"
+    model_name = "flashi2v"
     device = torch.device(f"cuda:{torch.cuda.current_device()}")
     dtype = torch.float32
 
     latents = torch.randn(1, 16, 16, 64, 64).to(device=device, dtype=dtype)
+    start_frame_latents = torch.randn(1, 16, 16, 64, 64).to(device=device, dtype=dtype)
+    fourier_features = torch.randn(1, 16, 16, 64, 64).to(device=device, dtype=dtype)
     text_embeddings = torch.randn(1, 512, 4096).to(device=device, dtype=dtype)
     timesteps = torch.randint(0, 1000, (1,)).to(device=device)
 
     # ddp_model = wan_model[model_name].from_pretrained(pretrained_model_dir)
     set_seed(1024, device_specific=False)
-    ddp_model = wan_model[model_name]()
+    ddp_model = models[model_name]()
     ddp_model = torch.nn.parallel.DistributedDataParallel(ddp_model.to(device=device, dtype=dtype))
 
     # fsdp_model = wan_model[model_name].from_pretrained(pretrained_model_dir)
     set_seed(1024, device_specific=False)
-    fsdp_model = wan_model[model_name]()
+    fsdp_model = models[model_name]()
     # ddp_fsdp_model = wan_model[model_name].from_pretrained(pretrained_model_dir)
     set_seed(1024, device_specific=False)
-    ddp_fsdp_model = wan_model[model_name]()
+    ddp_fsdp_model = models[model_name]()
 
     FSDP2_mix_warpper(
         ddp_fsdp_model,
         dp_mesh=ddp_fsdp_mesh,
         weight_dtype=dtype,
-        main_block_to_half=wan_model_main_block[model_name],
-        blocks_to_float=wan_model_blocks_to_float[model_name],
+        main_block_to_half=models_main_block[model_name],
+        blocks_to_float=models_blocks_to_float[model_name],
         reshard_after_forward=True,
         cpu_offload=False,
     )
@@ -139,15 +159,15 @@ if __name__ == "__main__":
         fsdp_model,
         dp_mesh=None,
         weight_dtype=dtype,
-        main_block_to_half=wan_model_main_block[model_name],
-        blocks_to_float=wan_model_blocks_to_float[model_name],
+        main_block_to_half=models_main_block[model_name],
+        blocks_to_float=models_blocks_to_float[model_name],
         reshard_after_forward=True,
         cpu_offload=False,
     )
     with torch.no_grad():
-        fsdp_output = fsdp_model(latents, timesteps, text_embeddings)
-        ddp_output = ddp_model(latents, timesteps, text_embeddings)
-        ddp_fsdp_output = ddp_fsdp_model(latents, timesteps, text_embeddings)
+        fsdp_output = fsdp_model(latents, timesteps, text_embeddings, start_frame_latents=start_frame_latents, fourier_features=fourier_features)
+        ddp_output = ddp_model(latents, timesteps, text_embeddings, start_frame_latents=start_frame_latents, fourier_features=fourier_features)
+        ddp_fsdp_output = ddp_fsdp_model(latents, timesteps, text_embeddings, start_frame_latents=start_frame_latents, fourier_features=fourier_features)
     if torch.distributed.get_rank() == 0:
         print(f"rank = {torch.distributed.get_rank()}, ddp_output[0, :10, 0]: {ddp_output[0, :10, 0]}, fsdp_output[0, :10, 0]: {fsdp_output[0, :10, 0]}, ddp_fsdp_output[0, :10, 0]: {ddp_fsdp_output[0, :10, 0]}")
         print("fsdp_output - ddp_output MSE:", torch.mean((fsdp_output.float() - ddp_output.float()) ** 2))

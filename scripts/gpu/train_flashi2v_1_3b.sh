@@ -13,10 +13,11 @@ export TOKENIZERS_PARALLELISM=false
 # export NCCL_IB_QPS_PER_CONNECTION=8
 # export NCCL_NET_PLUGIN=none
 # export NCCL_DEBUG=WARN
+export CUDA_VISIBLE_DEVICES=4,5,6,7
 
 MASTER_ADDR=${MASTER_ADDR:-127.0.0.1}
-MASTER_PORT=${MASTER_PORT:-29501}
-NPRC_PER_NODE=${NPRC_PER_NODE:-8}
+MASTER_PORT=${MASTER_PORT:-29503}
+NPRC_PER_NODE=${NPRC_PER_NODE:-4}
 NNODES=${NNODES:-1}
 WORLD_SIZE=$(($NNODES * $NPRC_PER_NODE))
 
@@ -25,7 +26,7 @@ torchrun \
   --nnodes=${NNODES} \
   --master_addr=${MASTER_ADDR} \
   --master_port=${MASTER_PORT} \
-  train/train.py \
-  --config configs/train/gpu/test_train_fsdp.yaml
+  train/train_flashi2v.py \
+  --config configs/train/gpu/flashi2v_1_3b.yaml
 
 # torchrun --nproc_per_node=8 --nnodes=1 ultrai2v/utils/encoder_cache.py

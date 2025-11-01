@@ -4,19 +4,23 @@ import yaml
 from tqdm import tqdm
 import wandb
 
-from ultrai2v.utils.utils import is_npu_available, check_and_import_npu
+from ultrai2v.utils.utils import check_and_import_npu
 import torch
+import torch.nn as nn
 check_and_import_npu()
 
 import torch.distributed as dist
 from torch.distributed.device_mesh import init_device_mesh
+from torch.distributed.tensor import DTensor
 from argparse import ArgumentParser
 
-from ultrai2v.data import ultra_datasets, ultra_samplers, ultra_collators
 from torch.utils.data import DataLoader
 
+from ultrai2v.data import ultra_datasets, ultra_samplers, ultra_collators
+from ultrai2v.data.utils.utils import cyclic_iter
 from ultrai2v.utils.log_utils import get_logger, log_on_main_process, verify_min_gpu_count
 from ultrai2v.utils.random_utils import set_seed, get_seed_worker
+from ultrai2v.utils.filter import HighFrequencyExtractor
 from ultrai2v.distributed.utils import (
     setup_distributed_env, 
     cleanup_distributed_env, 
@@ -34,15 +38,61 @@ from ultrai2v.modules import (
     models, 
     models_main_block, 
     models_blocks_to_float,
-    models_cp_plan,
+    models_blocks_to_output_float,
+    models_cp_plans,
 )
 from ultrai2v.schedulers import schedulers
 
 from ultrai2v.distributed.checkpoint import Checkpointer, PREFIX as checkpoint_prefix
-from ultrai2v.utils.constant import VIDEO, PROMPT_IDS, PROMPT_MASK
+from ultrai2v.utils.constant import VIDEO, PROMPT_IDS, PROMPT_MASK, START_FRAME
 from ultrai2v.utils.utils import str_to_precision, params_nums_to_str, get_memory_allocated
 from ultrai2v.utils.clip_grads import AdaptiveGradClipper
 from ultrai2v.utils.encoder_cache import EncoderCacheManager
+
+class FlashI2VWarpper(nn.Module):
+    def __init__(
+        self, 
+        model, 
+        scheduler,
+        low_freq_energy_ratio=[0.05, 0.95],
+        fft_return_abs=True,
+    ):
+        super().__init__()
+        self.model = model
+        self.scheduler = scheduler
+        self.high_freq_extractor = HighFrequencyExtractor(
+            low_freq_energy_ratio=low_freq_energy_ratio,
+            return_abs=fft_return_abs,
+        )
+
+    def forward(
+        self,
+        latents,
+        start_frame_latents,
+        text_embeddings,
+        weight_dtype,
+    ):
+        fourier_features = self.high_freq_extractor(start_frame_latents.squeeze(2)).unsqueeze(2)
+        fourier_features = fourier_features.repeat(1, 1, latents.shape[2], 1, 1)
+        fourier_features = fourier_features.to(weight_dtype)
+
+        start_frame_latents = self.model.learnable_proj(start_frame_latents)
+        assert start_frame_latents.dtype == torch.float32
+
+        q_sample_results = self.scheduler.q_sample(latents, start_frame_latents=start_frame_latents)
+        interpolated_latents = q_sample_results["x_t"].to(weight_dtype)
+        prior_dist = q_sample_results["prior_dist"]
+        sigmas = q_sample_results["sigmas"]
+        timesteps = q_sample_results["timesteps"]
+        with torch.autocast("cuda", dtype=weight_dtype):
+            model_output = self.model(
+                interpolated_latents,
+                timesteps,
+                text_embeddings,
+                fourier_features=fourier_features,
+            )
+
+        return dict(model_output=model_output, prior_dist=prior_dist, latents=latents, sigmas=sigmas)
 
 def main(config):
     logger = get_logger()
@@ -51,7 +101,7 @@ def main(config):
     seed = config.get("seed", 42)
 
     # model config
-    model_name = config.get("model", "wan_t2v")
+    model_name = config.get("model_name", "wan_t2v")
     model_config = config.get("model_config", {})
     vae_config = config.get("vae_config", {})
     text_encoder_config = config.get("text_encoder_config", {})
@@ -105,6 +155,9 @@ def main(config):
 
     # init fsdp config
     fsdp_size = config.get("fsdp_size", 8)
+    if fsdp_size > world_size: 
+        fsdp_size = world_size
+        log_on_main_process(logger, f"Warning, GPU nums are not enough! FSDP size reset to {fsdp_size}!")
     ddp_size = config.get("ddp_size", world_size // fsdp_size)
     ddp_fsdp_mesh = init_device_mesh("cuda", (ddp_size, fsdp_size), mesh_dim_names=("ddp", "fsdp"))
     logger.info(f"rank {rank} use ddp mesh {ddp_fsdp_mesh['ddp']} and fsdp mesh {ddp_fsdp_mesh['fsdp']}")
@@ -147,6 +200,8 @@ def main(config):
     )
     log_on_main_process(logger, f"VAE model initialized, memory allocated: {get_memory_allocated()} GiB")
 
+    torch.cuda.empty_cache()
+
     log_on_main_process(logger, "Initializing text encoder model...")
     text_encoder = T5EncoderModel(
         text_len=text_encoder_config.get("text_len", 512),
@@ -157,6 +212,8 @@ def main(config):
         device_mesh=ddp_fsdp_mesh if text_encoder_config.get("use_fsdp", False) else None,
     )
     log_on_main_process(logger, f"Text encoder model initialized, memory allocated: {get_memory_allocated()} GiB")
+
+    torch.cuda.empty_cache()
     # vae.to(device)
     # if not text_encoder_config.get("use_fsdp", False):
     #     text_encoder.to(device)
@@ -173,6 +230,7 @@ def main(config):
         model = models[model_name].from_pretrained(pretrained_model_dir_or_checkpoint)
     else:
         log_on_main_process(logger, f"Init model from scratch")
+        set_seed(seed, device_specific=False) # for init
         model = models[model_name](**model_config)
 
     if use_context_parallel and model.num_heads % cp_size != 0:
@@ -180,20 +238,30 @@ def main(config):
 
     model.train()
 
+    flashi2v_warpper = FlashI2VWarpper(
+        model=model, 
+        scheduler=scheduler, 
+        low_freq_energy_ratio=model_config.get("low_freq_energy_ratio", [0.05, 0.95]),
+        fft_return_abs=model_config.get("fft_return_abs", True)
+    )
+
     # wrap model with cp warpper if use context parallel
     if use_context_parallel:
-        CP_warpper(model, models_cp_plan[model_name], cp_mesh=cp_mesh)
+        CP_warpper(flashi2v_warpper, models_cp_plans[model_name], cp_mesh=cp_mesh)
 
     # wrap model with fsdp2 mix-precision warpper
     FSDP2_mix_warpper(
-        model,
+        flashi2v_warpper,
         dp_mesh=ddp_fsdp_mesh,
         weight_dtype=weight_dtype,
         main_block_to_half=models_main_block[model_name],
         blocks_to_float=models_blocks_to_float[model_name],
+        blocks_to_output_float=models_blocks_to_output_float[model_name],
         reshard_after_forward=reshard_after_forward,
         cpu_offload=model_cpu_offload,
     )
+
+    model = flashi2v_warpper.model
 
     log_on_main_process(logger, f"Diffusion model initialized, memory allocated: {get_memory_allocated()} GiB")
     if gradient_checkpointing:
@@ -223,7 +291,9 @@ def main(config):
         checkpointer.load_model_from_path(model, pretrained_model_dir_or_checkpoint)
         log_on_main_process(logger, f"Load EMA model from pretrained_model_checkpoint {pretrained_model_dir_or_checkpoint}")
         ema_model.model_copy_to_ema(model)
-        
+
+    torch.cuda.empty_cache()
+
     log_on_main_process(logger, "Initializing and loading optimizer checkpoint...")
     learning_rate = optimizer_config.get("lr", 1e-4)
     weight_decay = optimizer_config.get("weight_decay", 1e-2)
@@ -280,20 +350,33 @@ def main(config):
         sampler=sampler,
         collate_fn=collator,
         num_workers=num_workers,
-        pin_memory=data_config.get("pin_memory", True),
+        pin_memory=data_config.get("pin_memory", False),
         worker_init_fn=get_seed_worker(seed, num_workers=num_workers, device_specific=True),
     )
     encoder_cache_manager = EncoderCacheManager(tp_cp_group=cp_mesh.get_group() if use_context_parallel else None)
 
-    tqdm_bar = tqdm(total=training_iteration, disable=(rank != 0), initial=current_iteration, desc="Training")
-    gathered_avg_loss = 0.0
+    trainable_params_before_sharding = trainable_params_after_sharding = 0
+    locked_params_before_sharding = locked_params_after_sharding = 0
+    for p in model.parameters():
+        if p.requires_grad:
+            trainable_params_before_sharding += p.numel()
+            if isinstance(p, DTensor):
+                trainable_params_after_sharding += p._local_tensor.numel()
+            else:
+                trainable_params_after_sharding += p.numel()
+        else:
+            locked_params_before_sharding += p.numel()
+            if isinstance(p, DTensor):
+                locked_params_after_sharding += p._local_tensor.numel()
+            else:
+                locked_params_after_sharding += p.numel()
     start_training_logs = f"""
     {'=' * 20}Start Training{'=' * 20}
     Model: {model_name}
     Before FSDP sharding,
-    Model has {params_nums_to_str(sum(p.numel() for p in model.parameters() if p.requires_grad))} trainable parameters
+    Model has {params_nums_to_str(trainable_params_before_sharding)} trainable parameters and {params_nums_to_str(locked_params_before_sharding)} locked parameters
     After FSDP sharding,
-    Model has {params_nums_to_str(sum(p._local_tensor.numel() for p in model.parameters() if p.requires_grad))} trainable parameters
+    Model has {params_nums_to_str(trainable_params_after_sharding)} trainable parameters and {params_nums_to_str(locked_params_after_sharding)} locked parameters
     Use Context Parallel: {use_context_parallel}
     world_size: {world_size} GPUs
     dp_size: {dp_size} GPUs
@@ -317,76 +400,82 @@ def main(config):
     """
     log_on_main_process(logger, start_training_logs)
 
+    tqdm_bar = tqdm(total=training_iteration, disable=(rank != 0), initial=current_iteration, desc="Training")
+    gathered_avg_loss = 0.0
+    dataloader_iter = iter(cyclic_iter(dataloader)) # when one epoch is finished, this func will call __iter__ in sampler to produce next iter with different seed
     while current_iteration < training_iteration:
-        for batch in dataloader:
-            video = batch[VIDEO].to(dtype=torch.float32, device=device)
-            prompt_ids = batch[PROMPT_IDS].to(device=device)
-            prompt_mask = batch[PROMPT_MASK].to(device=device)
-            
-            if current_batch_nums % cp_size == 0:
-                with torch.no_grad():
-                    latents = vae.encode(video)
-                    text_embeddings = text_encoder(prompt_ids, prompt_mask)
-                    vae_latents_list, text_embeds_list = encoder_cache_manager(
-                        vae_latents_list=[latents],
-                        text_embeds_list=[text_embeddings],
-                        step=current_batch_nums
-                    )
-            else:
-                vae_latents_list, text_embeds_list = encoder_cache_manager(step=current_batch_nums)
-            latents = vae_latents_list[0]
-            text_embeddings = text_embeds_list[0]
+        if current_batch_nums % cp_size == 0:
+            batch = next(dataloader_iter)
+            video = batch.pop(VIDEO, None).to(dtype=torch.float32, device=device)
+            prompt_ids = batch.pop(PROMPT_IDS, None).to(device=device)
+            prompt_mask = batch.pop(PROMPT_MASK, None).to(device=device)
 
-            current_batch_nums += 1
-
-            q_sample_results = scheduler.q_sample(latents)
-            interpolated_latents = q_sample_results["x_t"]
-            prior_dist = q_sample_results["prior_dist"]
-            sigmas = q_sample_results["sigmas"]
-            timesteps = q_sample_results["timesteps"]
-            with torch.autocast("cuda", dtype=weight_dtype):
-                model_output = model(
-                    interpolated_latents.to(weight_dtype),
-                    timesteps,
-                    text_embeddings,
+            start_frame = batch.pop(START_FRAME, None).to(dtype=torch.float32, device=device)
+            with torch.no_grad():
+                latents = vae.encode(video)
+                start_frame_latents = vae.encode(start_frame)
+                text_embeddings = text_encoder(prompt_ids, prompt_mask)
+                vae_latents_list, text_embeds_list = encoder_cache_manager(
+                    vae_latents_list=[latents, start_frame_latents],
+                    text_embeds_list=[text_embeddings],
+                    step=current_batch_nums
                 )
+        else:
+            vae_latents_list, text_embeds_list = encoder_cache_manager(step=current_batch_nums)
+        latents = vae_latents_list[0]
+        start_frame_latents = vae_latents_list[1]
+        text_embeddings = text_embeds_list[0]
 
-            loss = scheduler.training_losses(model_output, latents, prior_dist)[0]
-            loss = loss / gradient_accumulation_steps # default value of gradient_accumulation_steps is 1
-            loss.backward()
-            loss_for_log = loss.clone().detach().unsqueeze(0)
-            gathered_loss = gather_data_from_all_ranks(loss_for_log, dim=0)
-            gathered_avg_loss += gathered_loss.mean().item()
-            if current_batch_nums % gradient_accumulation_steps == 0:
-                current_iteration += 1
-                grad_norm_after_clip = adaptive_grad_clipper.adaptive_clip(model.parameters())
-                # grad_norm_before_clip = torch.nn.utils.clip_grad_norm_(model.parameters(), init_max_grad_norm, foreach=False)
-                optimizer.step()
-                optimizer.zero_grad()
-                ema_model.update(model, current_iteration)
+        current_batch_nums += 1
 
-                if current_iteration % log_interval == 0:
-                    tqdm_bar.update(log_interval)
-                    tqdm_bar.set_postfix({"loss": gathered_avg_loss, "lr": optimizer.param_groups[0]['lr'], "grad_norm": grad_norm_after_clip.item()})
-                    if rank == 0 and wandb.run is not None:
-                        wandb_logs = {
-                            "train/loss": gathered_avg_loss,
-                            "train/lr": optimizer.param_groups[0]['lr'],
-                            "train/grad_norm": grad_norm_after_clip.item(),
-                        }
-                        wandb_logs.update(adaptive_grad_clipper.state_dict())
-                        wandb.log(wandb_logs, step=current_iteration)
+        warpper_output = flashi2v_warpper(
+            latents=latents,
+            start_frame_latents=start_frame_latents,
+            text_embeddings=text_embeddings,
+            weight_dtype=weight_dtype,
+        )
 
-                if current_iteration % save_interval == 0 or current_iteration == training_iteration:
-                    log_on_main_process(logger, f"Saving model checkpoint at iteration {current_iteration}...")
-                    checkpointer.save(model, optimizer, current_iteration)
-                    ema_model.store(model)
-                    ema_model.ema_copy_to_model(model)
-                    checkpointer.save_ema_model(model, current_iteration)
-                    ema_model.restore(model)
-                    adaptive_grad_clipper.save(output_dir=f"{output_dir}/{checkpoint_prefix}{current_iteration:09d}")
-                
-                gathered_avg_loss = 0.0    
+        model_output = warpper_output["model_output"]
+        prior_dist = warpper_output["prior_dist"]
+        latents = warpper_output["latents"]
+        sigmas = warpper_output["sigmas"]
+
+        loss = scheduler.training_losses(model_output, latents, prior_dist)[0]
+        loss = loss / gradient_accumulation_steps # default value of gradient_accumulation_steps is 1
+        loss.backward()
+        loss_for_log = loss.clone().detach().unsqueeze(0)
+        gathered_loss = gather_data_from_all_ranks(loss_for_log, dim=0)
+        gathered_avg_loss += gathered_loss.mean().item()
+        if current_batch_nums % gradient_accumulation_steps == 0:
+            current_iteration += 1
+            grad_norm_after_clip = adaptive_grad_clipper.adaptive_clip(model.parameters())
+            # grad_norm_before_clip = torch.nn.utils.clip_grad_norm_(model.parameters(), init_max_grad_norm, foreach=False)
+            optimizer.step()
+            optimizer.zero_grad()
+            ema_model.update(model, current_iteration)
+
+            if current_iteration % log_interval == 0:
+                tqdm_bar.update(log_interval)
+                tqdm_bar.set_postfix({"loss": gathered_avg_loss, "lr": optimizer.param_groups[0]['lr'], "grad_norm": grad_norm_after_clip.item()})
+                if rank == 0 and wandb.run is not None:
+                    wandb_logs = {
+                        "train/loss": gathered_avg_loss,
+                        "train/lr": optimizer.param_groups[0]['lr'],
+                        "train/grad_norm": grad_norm_after_clip.item(),
+                    }
+                    wandb_logs.update(adaptive_grad_clipper.state_dict())
+                    wandb.log(wandb_logs, step=current_iteration)
+
+            if current_iteration % save_interval == 0 or current_iteration == training_iteration:
+                log_on_main_process(logger, f"Saving model checkpoint at iteration {current_iteration}...")
+                checkpointer.save(model, optimizer, current_iteration)
+                ema_model.store(model)
+                ema_model.ema_copy_to_model(model)
+                checkpointer.save_ema_model(model, current_iteration)
+                ema_model.restore(model)
+                adaptive_grad_clipper.save(output_dir=f"{output_dir}/{checkpoint_prefix}{current_iteration:09d}")
+            
+            gathered_avg_loss = 0.0    
 
     end_training_logs = f"""
     {'=' * 20}End Training{'=' * 20}

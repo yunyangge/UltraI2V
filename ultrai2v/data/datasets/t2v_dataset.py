@@ -11,13 +11,13 @@ from torch.utils.data import Dataset
 import numpy as np
 from transformers import AutoTokenizer
 from ultrai2v.utils.constant import VIDEO, PROMPT_IDS, PROMPT_MASK
-from ..utils.utils import LMDBReader
-from ..utils.wan_utils import WanTextProcessor, WanVideoProcessor
+from ultrai2v.data.utils.utils import LMDBReader
+from ultrai2v.data.utils.wan_utils import WanTextProcessor, WanVideoProcessor
 
 T2VOutputData = {
-    PROMPT_IDS: [],
-    PROMPT_MASK: [],
-    VIDEO: [],
+    PROMPT_IDS: None,
+    PROMPT_MASK: None,
+    VIDEO: None,
 }
 
 class WanT2VDataset(Dataset):
@@ -117,7 +117,7 @@ class WanT2VDataset(Dataset):
         return prompt_input_ids, prompt_mask
         
 
-class RandomDataset(Dataset):
+class T2VRandomDataset(Dataset):
     def __init__(
         self,
         text_tokenizer_path,
@@ -159,7 +159,7 @@ class RandomDataset(Dataset):
         return prompt_input_ids, prompt_mask
 
 
-t2v_dataset = {
+dataset = {
     'wan_t2v': WanT2VDataset,
-    't2v_random': RandomDataset
+    't2v_random': T2VRandomDataset
 }

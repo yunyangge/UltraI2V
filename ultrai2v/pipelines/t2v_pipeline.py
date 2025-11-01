@@ -207,6 +207,6 @@ class T2VInferencePipeline(DiffusionPipeline):
         video = self.decode_latents(latents)
         return video
 
-pipelines = {
+pipeline = {
     't2v': T2VInferencePipeline
 }

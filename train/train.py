@@ -10,6 +10,7 @@ check_and_import_npu()
 
 import torch.distributed as dist
 from torch.distributed.device_mesh import init_device_mesh
+from torch.distributed.tensor import DTensor
 from argparse import ArgumentParser
 
 from torch.utils.data import DataLoader
@@ -35,12 +36,13 @@ from ultrai2v.modules import (
     models, 
     models_main_block, 
     models_blocks_to_float,
-    models_cp_plan,
+    models_blocks_to_output_float,
+    models_cp_plans,
 )
 from ultrai2v.schedulers import schedulers
 
 from ultrai2v.distributed.checkpoint import Checkpointer, PREFIX as checkpoint_prefix
-from ultrai2v.utils.constant import VIDEO, PROMPT_IDS, PROMPT_MASK
+from ultrai2v.utils.constant import VIDEO, PROMPT_IDS, PROMPT_MASK, START_FRAME
 from ultrai2v.utils.utils import str_to_precision, params_nums_to_str, get_memory_allocated
 from ultrai2v.utils.clip_grads import AdaptiveGradClipper
 from ultrai2v.utils.encoder_cache import EncoderCacheManager
@@ -52,7 +54,8 @@ def main(config):
     seed = config.get("seed", 42)
 
     # model config
-    model_name = config.get("model", "wan_t2v")
+    model_name = config.get("model_name", "wan_t2v")
+    task = config.get("task", "t2v")
     model_config = config.get("model_config", {})
     vae_config = config.get("vae_config", {})
     text_encoder_config = config.get("text_encoder_config", {})
@@ -106,6 +109,9 @@ def main(config):
 
     # init fsdp config
     fsdp_size = config.get("fsdp_size", 8)
+    if fsdp_size > world_size: 
+        fsdp_size = world_size
+        log_on_main_process(logger, f"Warning, GPU nums are not enough! FSDP size reset to {fsdp_size}!")
     ddp_size = config.get("ddp_size", world_size // fsdp_size)
     ddp_fsdp_mesh = init_device_mesh("cuda", (ddp_size, fsdp_size), mesh_dim_names=("ddp", "fsdp"))
     logger.info(f"rank {rank} use ddp mesh {ddp_fsdp_mesh['ddp']} and fsdp mesh {ddp_fsdp_mesh['fsdp']}")
@@ -188,7 +194,7 @@ def main(config):
 
     # wrap model with cp warpper if use context parallel
     if use_context_parallel:
-        CP_warpper(model, models_cp_plan[model_name], cp_mesh=cp_mesh)
+        CP_warpper(model, models_cp_plans[model_name], cp_mesh=cp_mesh)
 
     # wrap model with fsdp2 mix-precision warpper
     FSDP2_mix_warpper(
@@ -197,6 +203,7 @@ def main(config):
         weight_dtype=weight_dtype,
         main_block_to_half=models_main_block[model_name],
         blocks_to_float=models_blocks_to_float[model_name],
+        blocks_to_output_float=models_blocks_to_output_float[model_name],
         reshard_after_forward=reshard_after_forward,
         cpu_offload=model_cpu_offload,
     )
@@ -293,15 +300,28 @@ def main(config):
     )
     encoder_cache_manager = EncoderCacheManager(tp_cp_group=cp_mesh.get_group() if use_context_parallel else None)
 
-    tqdm_bar = tqdm(total=training_iteration, disable=(rank != 0), initial=current_iteration, desc="Training")
-    gathered_avg_loss = 0.0
+    trainable_params_before_sharding = trainable_params_after_sharding = 0
+    locked_params_before_sharding = locked_params_after_sharding = 0
+    for p in model.parameters():
+        if p.requires_grad:
+            trainable_params_before_sharding += p.numel()
+            if isinstance(p, DTensor):
+                trainable_params_after_sharding += p._local_tensor.numel()
+            else:
+                trainable_params_after_sharding += p.numel()
+        else:
+            locked_params_before_sharding += p.numel()
+            if isinstance(p, DTensor):
+                locked_params_after_sharding += p._local_tensor.numel()
+            else:
+                locked_params_after_sharding += p.numel()
     start_training_logs = f"""
     {'=' * 20}Start Training{'=' * 20}
     Model: {model_name}
     Before FSDP sharding,
-    Model has {params_nums_to_str(sum(p.numel() for p in model.parameters() if p.requires_grad))} trainable parameters
+    Model has {params_nums_to_str(trainable_params_before_sharding)} trainable parameters and {params_nums_to_str(locked_params_before_sharding)} locked parameters
     After FSDP sharding,
-    Model has {params_nums_to_str(sum(p._local_tensor.numel() for p in model.parameters() if p.requires_grad))} trainable parameters
+    Model has {params_nums_to_str(trainable_params_after_sharding)} trainable parameters and {params_nums_to_str(locked_params_after_sharding)} locked parameters
     Use Context Parallel: {use_context_parallel}
     world_size: {world_size} GPUs
     dp_size: {dp_size} GPUs
@@ -325,6 +345,8 @@ def main(config):
     """
     log_on_main_process(logger, start_training_logs)
 
+    tqdm_bar = tqdm(total=training_iteration, disable=(rank != 0), initial=current_iteration, desc="Training")
+    gathered_avg_loss = 0.0
     dataloader_iter = iter(cyclic_iter(dataloader)) # when one epoch is finished, this func will call __iter__ in sampler to produce next iter with different seed
     while current_iteration < training_iteration:
         if current_batch_nums % cp_size == 0:
@@ -332,31 +354,36 @@ def main(config):
             video = batch.pop(VIDEO, None).to(dtype=torch.float32, device=device)
             prompt_ids = batch.pop(PROMPT_IDS, None).to(device=device)
             prompt_mask = batch.pop(PROMPT_MASK, None).to(device=device)
+            
+            start_frame = batch.pop(START_FRAME, None).to(dtype=torch.float32, device=device) if "i2v" in task else None
             with torch.no_grad():
                 latents = vae.encode(video)
+                start_frame_latents = vae.encode(start_frame) if "i2v" in task else None
                 text_embeddings = text_encoder(prompt_ids, prompt_mask)
                 vae_latents_list, text_embeds_list = encoder_cache_manager(
-                    vae_latents_list=[latents],
+                    vae_latents_list=[latents, start_frame_latents] if "i2v" in task else [latents],
                     text_embeds_list=[text_embeddings],
                     step=current_batch_nums
                 )
         else:
             vae_latents_list, text_embeds_list = encoder_cache_manager(step=current_batch_nums)
         latents = vae_latents_list[0]
+        start_frame_latents = vae_latents_list[1] if "i2v" in task else None
         text_embeddings = text_embeds_list[0]
 
         current_batch_nums += 1
 
-        q_sample_results = scheduler.q_sample(latents)
-        interpolated_latents = q_sample_results["x_t"]
+        q_sample_results = scheduler.q_sample(latents, start_frame_latents=start_frame_latents)
+        interpolated_latents = q_sample_results["x_t"].to(weight_dtype)
         prior_dist = q_sample_results["prior_dist"]
         sigmas = q_sample_results["sigmas"]
         timesteps = q_sample_results["timesteps"]
         with torch.autocast("cuda", dtype=weight_dtype):
             model_output = model(
-                interpolated_latents.to(weight_dtype),
+                interpolated_latents,
                 timesteps,
                 text_embeddings,
+                start_frame_latents=start_frame_latents,
             )
 
         loss = scheduler.training_losses(model_output, latents, prior_dist)[0]

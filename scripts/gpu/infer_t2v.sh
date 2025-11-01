@@ -14,5 +14,5 @@ torchrun \
   --nnodes=${NNODES} \
   --master_addr=${MASTER_ADDR} \
   --master_port=${MASTER_PORT} \
-  inference/inference.py \
+  infer/infer_t2v.py \
   --config configs/infer/gpu/infer_t2v.yaml

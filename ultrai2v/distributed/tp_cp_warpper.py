@@ -26,7 +26,7 @@ def CP_warpper(model: nn.Module, all_cp_plans: dict, cp_mesh: DeviceMesh):
 
 if __name__ == "__main__":
     from torch.distributed.device_mesh import init_device_mesh
-    from ultrai2v.modules.model import wan_model, wan_model_blocks_to_float, wan_model_main_block, wan_cp_plan
+    from ultrai2v.modules import models, models_blocks_to_float, models_main_block, models_cp_plan
     from ultrai2v.distributed.utils import setup_distributed_env, cleanup_distributed_env
     from ultrai2v.utils.random_utils import set_seed
     
@@ -34,7 +34,7 @@ if __name__ == "__main__":
 
     ddp_cp_mesh = init_device_mesh(
         "cuda",
-        (2, 4),
+        (1, 4),
         mesh_dim_names=("ddp", "cp"),
     )
     if not is_npu_available():
@@ -44,24 +44,29 @@ if __name__ == "__main__":
     print("ddp_cp_mesh:", ddp_cp_mesh)
     set_seed(1024, device_specific=True, process_group=ddp_cp_mesh["ddp"].get_group())
 
-    model_name = "wan_t2v"
+    model_name = "flashi2v"
     device = torch.device(f"cuda:{torch.cuda.current_device()}")
     dtype = torch.float32
 
     latents = torch.randn(1, 16, 16, 64, 64).to(device=device, dtype=dtype)
+    start_frame_latents = torch.randn(1, 16, 16, 64, 64).to(device=device, dtype=dtype)
+    fourier_features = torch.randn(1, 16, 16, 64, 64).to(device=device, dtype=dtype)
     text_embeddings = torch.randn(1, 512, 4096).to(device=device, dtype=dtype)
     timesteps = torch.randint(0, 1000, (1,)).to(device=device)
 
-    ddp_model = wan_model[model_name].from_pretrained(pretrained_model_dir)
+    # ddp_model = models[model_name].from_pretrained(pretrained_model_dir)
+    set_seed(1024, device_specific=True, process_group=ddp_cp_mesh["ddp"].get_group())
+    ddp_model = models[model_name]()
     ddp_model = torch.nn.parallel.DistributedDataParallel(ddp_model.to(device=device, dtype=dtype))
+    set_seed(1024, device_specific=True, process_group=ddp_cp_mesh["ddp"].get_group())
+    # cp_model = models[model_name].from_pretrained(pretrained_model_dir).to(device=device, dtype=dtype)
+    cp_model = models[model_name]().to(device=device, dtype=dtype)
 
-    cp_model = wan_model[model_name].from_pretrained(pretrained_model_dir).to(device=device, dtype=dtype)
-
-    CP_warpper(cp_model, wan_cp_plan[model_name], cp_mesh=ddp_cp_mesh["cp"])
+    CP_warpper(cp_model, models_cp_plan[model_name], cp_mesh=ddp_cp_mesh["cp"])
 
     with torch.no_grad():
-        ddp_output = ddp_model(latents, timesteps, text_embeddings)
-        cp_output = cp_model(latents, timesteps, text_embeddings)
+        ddp_output = ddp_model(latents, timesteps, text_embeddings, start_frame_latents=start_frame_latents, fourier_features=fourier_features)
+        cp_output = cp_model(latents, timesteps, text_embeddings, start_frame_latents=start_frame_latents, fourier_features=fourier_features)
     # print(f"rank = {torch.distributed.get_rank()}, ddp_output[0, :10, 0]: {ddp_output[0, :10, 0]}, cp_output[0, :10, 0]: {ddp_output[0, :10, 0]}")
     print("ddp_output - cp_output MSE:", torch.mean((ddp_output.float() - cp_output.float()) ** 2))
 

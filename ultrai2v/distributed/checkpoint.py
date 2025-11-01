@@ -3,6 +3,7 @@ import time
 
 import torch
 import torch.nn as nn
+from safetensors.torch import load_file as safe_load
 from torch.distributed.checkpoint.state_dict import (
     _init_optim_state,
     get_model_state_dict,
@@ -51,8 +52,9 @@ class Checkpointer:
     def last_training_iteration(self):
         return self._last_training_iteration
     
-    def load_state_dict(self, model: FSDPModule, full_sd: dict):
-        if self.dcp_api:
+    @staticmethod
+    def load_state_dict(model: FSDPModule, full_sd: dict, dcp_api: bool = False):
+        if dcp_api:
             set_model_state_dict(
                 model=model,
                 model_state_dict=full_sd,
@@ -73,15 +75,21 @@ class Checkpointer:
             )
             sharded_sd[param_name] = nn.Parameter(sharded_tensor)
         # choose `assign=True` since we cannot call `copy_` on meta tensor
-        model.load_state_dict(sharded_sd, strict=False, assign=True)
+        missing_keys, unexpected_keys = model.load_state_dict(sharded_sd, strict=False, assign=True)
+        if torch.distributed.get_rank() == 0:
+            print("missing_keys", missing_keys)
+            print("unexpected_keys", unexpected_keys)
     
-    @classmethod
-    def load_model_from_path(cls, model: FSDPModule, model_path: str):
+    @staticmethod
+    def load_model_from_path(model: FSDPModule, model_path: str, dcp_api: bool = False):
         print(f'load model from {model_path}')
-        full_sd = torch.load(
-            model_path, mmap=True, weights_only=True, map_location="cpu"
-        )
-        cls.load_state_dict(model, full_sd)
+        if not model_path.endswith(".safetensors"):
+            full_sd = torch.load(
+                model_path, mmap=True, weights_only=True, map_location="cpu"
+            )
+        else:
+            full_sd = safe_load(model_path, device="cpu")
+        Checkpointer.load_state_dict(model, full_sd, dcp_api=dcp_api)
         del full_sd
 
     def load_model(self, model: FSDPModule, ema: bool = False):
@@ -93,7 +101,7 @@ class Checkpointer:
         full_sd = torch.load(
             last_model_checkpoint, mmap=True, weights_only=True, map_location="cpu"
         )
-        self.load_state_dict(model, full_sd)
+        self.load_state_dict(model, full_sd, dcp_api=self.dcp_api)
         del full_sd
 
     def load_optim(self, model: FSDPModule, opt: torch.optim.Optimizer):

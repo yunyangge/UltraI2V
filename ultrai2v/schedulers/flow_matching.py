@@ -1,11 +1,9 @@
 
-from typing import Optional
 import logging
 
 import math
 import torch
 from tqdm.auto import tqdm
-import torch.distributed.tensor as dist_tensor 
 
 
 class FlowMatchingScheduler:
@@ -28,7 +26,7 @@ class FlowMatchingScheduler:
         self.use_logitnorm_time_sampling = use_logitnorm_time_sampling
 
         if self.use_dynamic_shifting:
-            logging.info('In FlowMatchingScheduler, use dynamic shifting.')
+            logging.info(f'In {__class__.__name__}, use dynamic shifting.')
             self.base_image_seq = kwargs.pop("base_image_seq", 256)
             self.max_image_seq = kwargs.pop("max_image_seq", 4096)
             self.base_shift = kwargs.pop("base_shift", 0.5)
@@ -37,7 +35,7 @@ class FlowMatchingScheduler:
             self.shift_b = self.base_shift - self.shift_k * self.base_image_seq
 
         if self.use_logitnorm_time_sampling:
-            logging.info('In FlowMatchingScheduler, use logitnorm time sampling.')
+            logging.info(f'In {__class__.__name__}, use logitnorm time sampling.')
             self.logit_mean = kwargs.pop("logit_mean", 0.0)
             self.logit_std = kwargs.pop("logit_std", 1.0)
         
@@ -129,15 +127,7 @@ class FlowMatchingScheduler:
         return latents
 
     def get_latent_model_input(self, latents, **kwargs):
-        start_frame_latents = kwargs.get("start_frame_latents", None)
-        fourier_features = kwargs.get("fourier_features", None)
-        if start_frame_latents is not None and fourier_features is not None:
-            latent_model_input_cond = latent_model_input_uncond = latents - start_frame_latents
-            latent_model_input_cond = torch.cat([latent_model_input_cond, fourier_features], dim=1)
-            latent_model_input_uncond = torch.cat([latent_model_input_uncond, fourier_features], dim=1)
-        else:
-            latent_model_input_cond = latent_model_input_uncond = latents
-
+        latent_model_input_cond = latent_model_input_uncond = latents
         return latent_model_input_cond, latent_model_input_uncond
 
     def q_sample(
