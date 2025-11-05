@@ -131,6 +131,7 @@ class FlashI2VModel(WanModel):
         self.learnable_proj.init_weights()
 
     def reset_parameters(self):
+        print("reset_parameters")
         self.flashi2v_init_weights()
 
     def forward(

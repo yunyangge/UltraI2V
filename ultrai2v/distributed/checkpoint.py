@@ -238,6 +238,8 @@ class Checkpointer:
             os.makedirs(new_checkpoint_folder, exist_ok=True)
             torch.save(model_state_dict, new_model_checkpoint)
             torch.save(optim_state_dict, new_optim_checkpoint)
+        del model_state_dict
+        del optim_state_dict
 
     def save_ema_model(self, ema_model: FSDPModule, iteration: int):
         model_state_dict = self._get_full_model_state_dict(ema_model)
@@ -247,3 +249,4 @@ class Checkpointer:
             new_model_checkpoint = f"{new_checkpoint_folder}/ema_{MODEL_CHECKPOINT}"
             os.makedirs(new_checkpoint_folder, exist_ok=True)
             torch.save(model_state_dict, new_model_checkpoint)
+        del model_state_dict
