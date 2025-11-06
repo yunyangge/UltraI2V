@@ -26,7 +26,7 @@ def CP_warpper(model: nn.Module, all_cp_plans: dict, cp_mesh: DeviceMesh):
 
 if __name__ == "__main__":
     from torch.distributed.device_mesh import init_device_mesh
-    from ultrai2v.modules import models, models_blocks_to_float, models_main_block, models_cp_plan
+    from ultrai2v.modules import models, models_blocks_to_float, models_main_block, models_cp_plans
     from ultrai2v.distributed.utils import setup_distributed_env, cleanup_distributed_env
     from ultrai2v.utils.random_utils import set_seed
     
@@ -62,7 +62,7 @@ if __name__ == "__main__":
     # cp_model = models[model_name].from_pretrained(pretrained_model_dir).to(device=device, dtype=dtype)
     cp_model = models[model_name]().to(device=device, dtype=dtype)
 
-    CP_warpper(cp_model, models_cp_plan[model_name], cp_mesh=ddp_cp_mesh["cp"])
+    CP_warpper(cp_model, models_cp_plans[model_name], cp_mesh=ddp_cp_mesh["cp"])
 
     with torch.no_grad():
         ddp_output = ddp_model(latents, timesteps, text_embeddings, start_frame_latents=start_frame_latents, fourier_features=fourier_features)

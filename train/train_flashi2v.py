@@ -222,9 +222,11 @@ def main(config):
     scheduler = schedulers[scheduler_config.get("scheduler_name", "flow_matching")](**scheduler_config)
 
     pretrained_model_dir_or_checkpoint = model_config.get("pretrained_model_dir_or_checkpoint", None)
+    load_pretrained_model = False
     if pretrained_model_dir_or_checkpoint is not None and os.path.isdir(pretrained_model_dir_or_checkpoint):
         log_on_main_process(logger, f"Load model from pretrained_model_dir {pretrained_model_dir_or_checkpoint}")
         model = models[model_name].from_pretrained(pretrained_model_dir_or_checkpoint)
+        load_pretrained_model = True
     else:
         log_on_main_process(logger, f"Init model from scratch")
         with torch.device("meta"):
@@ -259,9 +261,11 @@ def main(config):
     )
 
     model = flashi2v_warpper.model
-    model.to_empty(device=device)
-    set_seed(seed, device_specific=False) # for init
-    model.reset_parameters() # we should call reset_parameters because we init model at meta device 
+
+    if not load_pretrained_model:
+        model.to_empty(device=device)
+        set_seed(seed, device_specific=False) # for init
+        model.reset_parameters() # we should call reset_parameters because we init model at meta device 
 
     log_on_main_process(logger, f"Diffusion model initialized, memory allocated: {get_memory_allocated()} GiB")
     if gradient_checkpointing:
@@ -291,6 +295,7 @@ def main(config):
         checkpointer.load_model_from_path(model, pretrained_model_dir_or_checkpoint)
         log_on_main_process(logger, f"Load EMA model from pretrained_model_checkpoint {pretrained_model_dir_or_checkpoint}")
         ema_model.model_copy_to_ema(model)
+        load_pretrained_model = True
     # else:
     #     raise NotImplementedError(f"Training FlashI2V model must init with a pretrained t2v model, but pretrained_model_dir_or_checkpoint {pretrained_model_dir_or_checkpoint} does not exist!")
 

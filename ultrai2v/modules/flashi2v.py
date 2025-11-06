@@ -116,12 +116,9 @@ class FlashI2VModel(WanModel):
 
         self.flashi2v_init_weights()
 
-    def init_weights(self):
-        return
 
     # we use t2v model as initial weights, so set ignore_predictor as True
     def flashi2v_init_weights(self):
-        super().init_weights()
 
         nn.init.xavier_uniform_(self.fourier_embedding[0].weight.flatten(1))
         nn.init.zeros_(self.fourier_embedding[0].bias)
@@ -131,7 +128,8 @@ class FlashI2VModel(WanModel):
         self.learnable_proj.init_weights()
 
     def reset_parameters(self):
-        print("reset_parameters")
+        print(f"{__class__.__name__} reset parameters!")
+        super().reset_parameters()
         self.flashi2v_init_weights()
 
     def forward(
