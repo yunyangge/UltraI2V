@@ -1,5 +1,5 @@
 import os
-import time
+import gc
 
 import torch
 import torch.nn as nn
@@ -63,6 +63,8 @@ class Checkpointer:
                     broadcast_from_rank0=True,
                 ),
             )
+            del full_sd
+            gc.collect()
             return
         meta_sharded_sd = model.state_dict()
         sharded_sd = {}
@@ -79,6 +81,8 @@ class Checkpointer:
         if torch.distributed.get_rank() == 0:
             print("missing_keys", missing_keys)
             print("unexpected_keys", unexpected_keys)
+        del full_sd, sharded_sd
+        gc.collect()
     
     @staticmethod
     def load_model_from_path(model: FSDPModule, model_path: str, dcp_api: bool = False):
@@ -122,6 +126,8 @@ class Checkpointer:
                     broadcast_from_rank0=True,
                 ),
             )
+            del full_sd
+            gc.collect()
             return
         _init_optim_state(opt)
         param_groups = opt.state_dict()["param_groups"]
@@ -163,6 +169,7 @@ class Checkpointer:
             }
         )
         del full_sd
+        gc.collect()
 
     def _get_full_model_state_dict(self, model: FSDPModule):
         if self.dcp_api:
