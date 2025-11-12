@@ -29,22 +29,25 @@ class FlashI2VFlowMatchingScheduler(FlowMatchingScheduler):
 
                 # with torch.autocast("cuda", dtype=latents.dtype):
                 # flashi2v model use autocast internally
-                noise_pred = model(
+                output = model(
                     latent_model_input_cond,
                     timestep,
-                    model_kwargs.get('prompt_embeds'),
+                    model_kwargs.get("prompt_embeds"),
                     **model_kwargs
                 )
+                noise_pred = output.pop("model_output")
+                model_kwargs.update(output)
     
                 if self.do_classifier_free_guidance:
                     # with torch.autocast("cuda", dtype=latents.dtype):
                     # flashi2v model use autocast internally
-                    noise_uncond = model(
+                    output = model(
                         latent_model_input_uncond,
                         timestep,
                         model_kwargs.get('negative_prompt_embeds'),
                         **model_kwargs
                     )
+                    noise_uncond = output.pop("model_output")
                     noise_pred = noise_uncond + self.guidance_scale * (noise_pred - noise_uncond)
                 # compute the previous noisy sample x_t -> x_t-1
                 latents = self._step(noise_pred, latents, sigmas[i + 1] - sigmas[i])

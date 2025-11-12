@@ -82,7 +82,9 @@ class FlashI2VInferencePipeline(T2VInferencePipeline):
         model_kwargs = {
             "prompt_embeds": prompt_embeds,
             "negative_prompt_embeds": negative_prompt_embeds,
-            "start_frame_latents": start_frame_latents
+            "start_frame_latents": start_frame_latents,
+            "fourier_features": None,
+            "start_frame_latents_proj": None,
         }
 
         latents = self.scheduler.sample(model=self.predictor, latents=latents, **model_kwargs)

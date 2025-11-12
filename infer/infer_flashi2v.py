@@ -58,7 +58,7 @@ class FlashI2VWrapper(nn.Module):
         **kwargs,
     ):
         weight_dtype = text_embeddings.dtype
-
+        
         if fourier_features is None or start_frame_latents_proj is None:
             fourier_features = self.high_freq_extractor(start_frame_latents.squeeze(2)).unsqueeze(2)
             fourier_features = fourier_features.repeat(1, 1, latents.shape[2], 1, 1)
@@ -77,7 +77,7 @@ class FlashI2VWrapper(nn.Module):
                 fourier_features=fourier_features,
             )
 
-        return model_output
+        return dict(model_output=model_output, fourier_features=fourier_features, start_frame_latents_proj=start_frame_latents_proj)
 
 
 def main(config):
@@ -246,6 +246,14 @@ def main(config):
     else:
         cp_rank = 0
         cp_size = 1
+
+    if len(prompts) % dp_size > 0:
+        log_on_main_process(logger, f"Warning! Caused by using FSDP, we will pad some dummy data to make sure len(prompts) {len(prompts)} == dp_size {dp_size}"
+                                    f" and len(conditional_images) {len(conditional_images)} == dp_size {dp_size}.")
+        while len(prompts) % dp_size > 0:
+            prompts.append(prompts[0])
+            conditional_images.append(conditional_images[0])
+
     video_grid = []
     for index in range(dp_rank * batch_size, len(prompts), batch_size * dp_size):
         batch_prompts = prompts[index: index + batch_size]

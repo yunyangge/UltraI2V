@@ -179,6 +179,12 @@ def main(config):
     else:
         cp_rank = 0
         cp_size = 1
+
+    if len(prompts) % dp_size > 0:
+        log_on_main_process(logger, f"Warning! Caused by using FSDP, we will pad some dummy data to make sure len(prompts) {len(prompts)} == dp_size {dp_size}.")
+        while len(prompts) % dp_size > 0:
+            prompts.append(prompts[0])
+
     video_grid = []
     for index in range(dp_rank * batch_size, len(prompts), batch_size * dp_size):
         batch_prompts = prompts[index: index + batch_size]
