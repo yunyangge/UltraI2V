@@ -4,7 +4,7 @@ model_name: "wan_t2v"
 pipeline_name: "t2v"
 seed: 1024
 
-prompt_txt: "assets/simple_prompts.txt"
+prompt_txt: "assets/t2v/simple_prompts.txt"
 output_dir: "samples/wan_t2v"
 
 num_frames: 49
@@ -21,7 +21,15 @@ weight_dtype: "bf16"
 save_with_dcp_api: False
 
 model_config:
-  pretrained_model_dir_or_checkpoint: "/mnt/data2/Wan2.1-T2V-1.3B/"
+  dim: 1536
+  ffn_dim: 8960
+  freq_dim: 256
+  in_dim: 16
+  num_heads: 12
+  num_layers: 30
+  out_dim: 16
+  text_len: 512
+  pretrained_model_dir_or_checkpoint: "/mnt/data2/Wan2.1-T2V-1.3B/diffusion_pytorch_model.safetensors"
 
 scheduler_config:
   scheduler_name: "flow_matching"
