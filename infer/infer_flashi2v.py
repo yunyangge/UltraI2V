@@ -269,7 +269,6 @@ def main(config):
             device=device
         )
         if cp_rank == 0:
-            print(f"save index {index}")
             save_videos(videos, index, output_dir, save_fps)
             video_grid.append(videos)
 
