@@ -7,21 +7,20 @@ import random
 from concurrent.futures import ThreadPoolExecutor
 import copy
 
-from torch.utils.data import Dataset
 import numpy as np
 from transformers import AutoTokenizer
 from ultrai2v.utils.constant import VIDEO, PROMPT_IDS, PROMPT_MASK
 from ultrai2v.data.utils.utils import LMDBReader
 from ultrai2v.data.utils.wan_utils import WanTextProcessor, WanVideoProcessor
+from ultrai2v.data.datasets.base_dataset import BaseDataset
 
 T2VOutputData = {
     PROMPT_IDS: None,
     PROMPT_MASK: None,
     VIDEO: None,
-    "drop_text": False
 }
 
-class WanT2VDataset(Dataset):
+class WanT2VDataset(BaseDataset):
 
     def __init__(
         self,
@@ -118,7 +117,7 @@ class WanT2VDataset(Dataset):
         return prompt_input_ids, prompt_mask
         
 
-class T2VRandomDataset(Dataset):
+class T2VRandomDataset(BaseDataset):
     def __init__(
         self,
         text_tokenizer_path,
@@ -153,7 +152,6 @@ class T2VRandomDataset(Dataset):
         text = ""
         examples[PROMPT_IDS], examples[PROMPT_MASK] = self.get_text_data(text)
         examples[VIDEO] = torch.randn(3, self.sample_num_frames, self.sample_height, self.sample_width)
-        examples["drop_text"] = random.random() > 0.5
         return examples
 
     def get_text_data(self, text):
