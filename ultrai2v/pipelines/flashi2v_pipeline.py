@@ -18,8 +18,9 @@ class FlashI2VInferencePipeline(T2VInferencePipeline):
         )
 
     def prepare_start_frame_latents(self, image, transform):
-        image = torch.stack(image) # B [C H W] -> B C H W
-        image = transform(image).unsqueeze(2) # B C H W -> B C 1 H W
+        image = [transform(i.unsqueeze(0)) for i in image]
+        image = torch.cat(image) # B [1 C H W] -> B C H W
+        image = image.unsqueeze(2) # B C H W -> B C 1 H W
         image = image.to(dtype=self.vae.dtype, device=self.vae.device)
         image_latents = self.vae.encode(image).to(torch.float32)
         return image_latents
