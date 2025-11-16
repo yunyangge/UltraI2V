@@ -89,9 +89,52 @@ class LearnableProj(nn.Module):
         return self.proj(x)
 
 class FlashI2VModel(WanModel):
+
+    ignore_for_config = [
+        "patch_size",
+        "cross_attn_norm",
+        "qk_norm",
+        "text_dim",
+        "window_size",
+    ]
+
     @register_to_config
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
+    def __init__(
+        self,
+        patch_size=(1, 2, 2),
+        text_len=512,
+        in_dim=16,
+        dim=2048,
+        ffn_dim=8192,
+        freq_dim=256,
+        text_dim=4096,
+        out_dim=16,
+        num_heads=16,
+        num_layers=32,
+        window_size=(-1, -1),
+        qk_norm=True,
+        cross_attn_norm=True,
+        eps=1e-6,
+        conv3x3x3_proj=False,
+        **kwargs,
+    ):
+        super().__init__(
+            patch_size=patch_size,
+            text_len=text_len,
+            in_dim=in_dim,
+            dim=dim,
+            ffn_dim=ffn_dim,
+            freq_dim=freq_dim,
+            text_dim=text_dim,
+            out_dim=out_dim,
+            num_heads=num_heads,
+            num_layers=num_layers,
+            window_size=window_size,
+            qk_norm=qk_norm,
+            cross_attn_norm=cross_attn_norm,
+            eps=eps,
+            **kwargs
+        )
 
         self.fourier_embedding = nn.Sequential(
             nn.Conv3d(
@@ -113,11 +156,10 @@ class FlashI2VModel(WanModel):
             dim=self.dim,
             patch_size=self.patch_size,
             out_dim=self.out_dim,
-            conv3x3x3_proj=kwargs.get("conv3x3x3_proj", False),
+            conv3x3x3_proj=conv3x3x3_proj,
         )
 
         self.flashi2v_init_weights()
-
 
     # we use t2v model as initial weights, so set ignore_predictor as True
     def flashi2v_init_weights(self):

@@ -34,7 +34,7 @@ model_config:
   low_freq_energy_ratio: 0.1
   fft_return_abs: True
   conv3x3x3_proj: False
-  pretrained_model_dir_or_checkpoint: "/mnt/data2/Wan2.1-T2V-1.3B/diffusion_pytorch_model.safetensors"
+  pretrained_model_dir_or_checkpoint: "/work/share1/checkpoint/gyy/flashi2v_1_3b/diffusers_weights"
 
 scheduler_config:
   scheduler_name: "flashi2v_flow_matching"
@@ -43,11 +43,11 @@ scheduler_config:
   guidance_scale: 5.0
 
 vae_config:
-  vae_path: "/mnt/data2/Wan2.1-T2V-1.3B/Wan2.1_VAE.pth"
+  vae_path: "/work/share1/checkpoint/Wan-AI/Wan2.1-T2V-1.3B/Wan2.1_VAE.pth"
   dtype: "fp32"
 
 text_encoder_config:
   text_len: 512
-  checkpoint_path: "/mnt/data2/Wan2.1-T2V-1.3B/models_t5_umt5-xxl-enc-bf16.pth"
-  text_tokenizer_path: "/mnt/data2/Wan2.1-T2V-1.3B/google/umt5-xxl"
+  checkpoint_path: "/work/share1/checkpoint/Wan-AI/Wan2.1-T2V-1.3B/models_t5_umt5-xxl-enc-bf16.pth"
+  text_tokenizer_path: "/work/share1/checkpoint/Wan-AI/Wan2.1-T2V-1.3B/google/umt5-xxl"
   use_fsdp: True

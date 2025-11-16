@@ -1,8 +1,8 @@
 import torch
 from ultrai2v.modules.flashi2v import FlashI2VModel
 
-orig_weights_path = 'want2v_14b.pt'
-save_path = 'diffusers_weights'
+orig_weights_path = '/work/share1/checkpoint/gyy/flashi2v_14b/iter_000040000/ema_model_state_dict.pt'
+save_path = '/work/share1/checkpoint/gyy/flashi2v_14b/diffusers_weights'
 state_dict = torch.load(orig_weights_path, map_location='cpu')
 config = {
   'dim': 5120,
@@ -19,4 +19,5 @@ config = {
 }
 model = FlashI2VModel(**config)
 missing_keys, unexpected_keys = model.load_state_dict(state_dict, strict=False)
+print(f"missing_keys: {missing_keys} \nunexpected_keys: {unexpected_keys}")
 model.save_pretrained(save_path)
