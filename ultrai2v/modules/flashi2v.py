@@ -6,6 +6,7 @@ from torch.distributed.tensor.parallel import (
     PrepareModuleOutput,
 )
 from torch.distributed.tensor import Shard, Replicate
+from diffusers.configuration_utils import register_to_config
 from .want2v import (
     sinusoidal_embedding_1d,
     rope_params,
@@ -88,6 +89,7 @@ class LearnableProj(nn.Module):
         return self.proj(x)
 
 class FlashI2VModel(WanModel):
+    @register_to_config
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
 

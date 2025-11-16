@@ -30,7 +30,7 @@ model_config:
   num_heads: 40
   num_layers: 40
   out_dim: 16
-  text_len": 512
+  text_len: 512
   low_freq_energy_ratio: 0.1
   fft_return_abs: True
   conv3x3x3_proj: False
