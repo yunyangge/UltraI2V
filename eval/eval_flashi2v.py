@@ -15,7 +15,7 @@ from torchdata.stateful_dataloader import StatefulDataLoader
 from ultrai2v.utils.constant import PROMPT, START_FRAME, NAME_INDEX
 from ultrai2v.distributed.utils import setup_distributed_env, cleanup_distributed_env, gather_tensor_list_to_one
 from ultrai2v.distributed.fsdp2_wrapper import FSDP2_mix_wrapper
-from ultrai2v.distributed.tp_cp_wrapper import CP_wrapper
+from ultrai2v.distributed.cp_wrapper import CP_wrapper
 from ultrai2v.modules import (
     WanVAE, 
     T5EncoderModel, 

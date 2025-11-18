@@ -29,7 +29,7 @@ from ultrai2v.distributed.utils import (
 )
 from ultrai2v.distributed.fsdp2_wrapper import FSDP2_mix_wrapper
 from ultrai2v.distributed.fsdp_ema import FSDPEMAModel as EMAModel
-from ultrai2v.distributed.tp_cp_wrapper import CP_wrapper
+from ultrai2v.distributed.cp_wrapper import CP_wrapper
 
 from ultrai2v.modules import (
     WanVAE, 
