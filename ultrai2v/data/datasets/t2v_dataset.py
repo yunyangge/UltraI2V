@@ -176,14 +176,14 @@ class T2VEvalDataset(BaseDataset):
         **kwargs,
     ):
         self.dataset_reader = LMDBReader(metafile_or_dir_path)
-        self.data_length = len(self.dataset_reader)
+        self.num_samples_per_prompt = num_samples_per_prompt
+        self.data_length = len(self.dataset_reader) * self.num_samples_per_prompt
         print(f'Build T2VEvalDataset, data length: {self.data_length}...')
 
         self.sample_height = sample_height
         self.sample_width = sample_width
         self.sample_num_frames = sample_num_frames
         self.train_fps = train_fps
-        self.num_samples_per_prompt = num_samples_per_prompt
 
         self.executor = ThreadPoolExecutor(max_workers=1)
         self.timeout = kwargs.get("timeout", 60) 
@@ -199,7 +199,7 @@ class T2VEvalDataset(BaseDataset):
         return self.getitem(index)
 
     def __len__(self):
-        return (self.data_length * self.num_samples_per_prompt)
+        return self.data_length
 
     def getitem(self, index):
         video_index = index // self.num_samples_per_prompt
