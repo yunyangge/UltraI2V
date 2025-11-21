@@ -43,6 +43,10 @@ def set_seed(
         torch_npu.npu.manual_seed_all(seed)
         torch_npu.npu.manual_seed(seed)
     if deterministic:
+        print(f"Using deterministic training!")
+        if is_npu_available():
+            os.environ["HCCL_DETERMINISTIC"] = 'True'
+            os.environ['CLOSE_MATMUL_K_SHIFT']= '1'
         torch.backends.cudnn.deterministic = True
         torch.backends.cudnn.benchmark = False
         torch.use_deterministic_algorithms(True)

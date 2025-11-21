@@ -150,7 +150,7 @@ class FlowMatchingScheduler:
 
         return dict(x_t=interpolated_latents, prior_dist=prior_dist, sigmas=sigmas, timesteps=timesteps)
 
-    def _set_sigmas(self, sigmas=None, batch_size=None, image_seq_len=None, training=True, device="cpu"):
+    def _set_sigmas(self, sigmas=None, batch_size=None, image_seq_len=None, training=True, device=torch.device("cpu")):
         if training:
             if sigmas is None:
                 if self.use_logitnorm_time_sampling:
@@ -169,8 +169,6 @@ class FlowMatchingScheduler:
         else:
             shift = self.shift
         sigmas = shift * sigmas / (1 + (shift - 1) * sigmas)
-
-        sigmas = torch.ones((batch_size,), device=device) * 0.5
 
         return sigmas
 

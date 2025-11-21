@@ -2,7 +2,7 @@
 
 model_name: "flashi2v"
 pipeline_name: "flashi2v"
-seed: 1024
+seed: 2025
 
 output_dir: "/work/share/projects/gyy/UltraI2V/samples/flashi2v_14b_vbench_49x480x832"
 
