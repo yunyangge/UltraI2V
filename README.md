@@ -2,7 +2,7 @@
 ## 😊Code Environment
 1. Conda env creation
 ```
-conda create -n torchvideo python=3.10
+conda create -n torchdiff python=3.10
 ```
 2. Install repos
 ```
