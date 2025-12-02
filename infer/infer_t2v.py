@@ -3,16 +3,16 @@ import yaml
 from argparse import ArgumentParser
 
 import torch
-from torchvideo.utils.utils import check_and_import_npu
+from torchdiff.utils.utils import check_and_import_npu
 check_and_import_npu()
 
 from torch.distributed.device_mesh import init_device_mesh
 from transformers import AutoTokenizer
 
-from torchvideo.distributed.utils import setup_distributed_env, cleanup_distributed_env, gather_tensor_list_to_one
-from torchvideo.distributed.fsdp2_wrapper import FSDP2_mix_wrapper
-from torchvideo.distributed.cp_wrapper import CP_wrapper
-from torchvideo.modules import (
+from torchdiff.distributed.utils import setup_distributed_env, cleanup_distributed_env, gather_tensor_list_to_one
+from torchdiff.distributed.fsdp2_wrapper import FSDP2_mix_wrapper
+from torchdiff.distributed.cp_wrapper import CP_wrapper
+from torchdiff.modules import (
     WanVAE, 
     T5EncoderModel, 
     models, 
@@ -21,13 +21,13 @@ from torchvideo.modules import (
     models_blocks_to_output_float,
     models_cp_plans,
 )
-from torchvideo.schedulers import schedulers
-from torchvideo.distributed.checkpoint import Checkpointer
-from torchvideo.utils.utils import str_to_precision, get_memory_allocated
-from torchvideo.utils.log_utils import get_logger, log_on_main_process
-from torchvideo.pipelines import pipelines
-from torchvideo.utils.infer_utils import load_prompts, load_images, save_videos, save_video_grid
-from torchvideo.utils.random_utils import set_seed
+from torchdiff.schedulers import schedulers
+from torchdiff.distributed.checkpoint import Checkpointer
+from torchdiff.utils.utils import str_to_precision, get_memory_allocated
+from torchdiff.utils.log_utils import get_logger, log_on_main_process
+from torchdiff.pipelines import pipelines
+from torchdiff.utils.infer_utils import load_prompts, load_images, save_videos, save_video_grid
+from torchdiff.utils.random_utils import set_seed
 
 def main(config):
     logger = get_logger()

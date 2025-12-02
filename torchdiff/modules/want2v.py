@@ -8,9 +8,9 @@ from diffusers.models.modeling_utils import ModelMixin
 from einops import rearrange
 
 from torch.distributed.tensor import Shard, Replicate
-from torchvideo.utils.utils import is_npu_available
+from torchdiff.utils.utils import is_npu_available
 
-from torchvideo.distributed.redistribution import Redistribution
+from torchdiff.distributed.redistribution import Redistribution
 
 
 from .attention import flash_attention, attention

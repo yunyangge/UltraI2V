@@ -90,7 +90,7 @@ class Redistribution(ParallelStyle):
 
 if __name__ == "__main__":
     import os
-    from torchvideo.distributed.utils import setup_distributed_env, cleanup_distributed_env
+    from torchdiff.distributed.utils import setup_distributed_env, cleanup_distributed_env
     from torch.distributed.device_mesh import init_device_mesh
     
     setup_distributed_env()

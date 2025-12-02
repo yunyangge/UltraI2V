@@ -1,5 +1,5 @@
 import torch
-from torchvideo.modules.flashi2v import FlashI2VModel
+from torchdiff.modules.flashi2v import FlashI2VModel
 
 orig_weights_path = '/work/share1/checkpoint/gyy/flashi2v_14b/iter_000040000/ema_model_state_dict.pt'
 save_path = '/work/share1/checkpoint/gyy/flashi2v_14b/diffusers_weights'

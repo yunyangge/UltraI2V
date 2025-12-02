@@ -1,5 +1,5 @@
 import torch
-from torchvideo.utils.utils import is_npu_available, check_and_import_npu
+from torchdiff.utils.utils import is_npu_available, check_and_import_npu
 check_and_import_npu()
 import logging
 from torch.distributed.fsdp import (
@@ -105,9 +105,9 @@ def FSDP2_fp32_wrapper(
 
 if __name__ == "__main__":
     from torch.distributed.device_mesh import init_device_mesh
-    from torchvideo.modules import models, models_blocks_to_float, models_main_block
-    from torchvideo.distributed.utils import setup_distributed_env, cleanup_distributed_env, gather_data_from_all_ranks
-    from torchvideo.utils.random_utils import set_seed
+    from torchdiff.modules import models, models_blocks_to_float, models_main_block
+    from torchdiff.distributed.utils import setup_distributed_env, cleanup_distributed_env, gather_data_from_all_ranks
+    from torchdiff.utils.random_utils import set_seed
     
     setup_distributed_env()
 
