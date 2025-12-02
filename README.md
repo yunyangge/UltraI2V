@@ -15,7 +15,7 @@ pip install -e .
 ## 🧑‍🏭Training
 1. Modify the config file
 In `config/`, find the config you need and modify it.
-For example, training text-to-video on WanT2V 14B, you should modify configs/train/gpu/t2v_14b.yaml
+For example, training text-to-video on WanT2V 14B, you should modify configs/train/xpu/t2v_14b.yaml
 ```
 # test yaml
 model_name: "wan_t2v" # model_name, default value is Wan T2V
@@ -85,4 +85,61 @@ optimizer_config:
 ```
 bash scripts/train/xpu/train_t2v_14b.sh
 ```
-3. 
+## 💫Inference
+1. Modify the config file
+In `config/`, find the config you need and modify it.
+For example, training text-to-video on WanT2V 14B, you should modify configs/infer/xpu/t2v_14b.yaml
+```
+# test yaml
+
+model_name: "wan_t2v"
+pipeline_name: "t2v"
+seed: 1024
+
+prompt_txt: "assets/t2v/simple_prompts.txt" # prompt
+output_dir: "samples/wan_t2v" # save dir
+
+num_frames: 49
+height: 480
+width: 832
+save_fps: 16
+batch_size: 1
+
+fsdp_size: 8
+cp_size: 8
+use_context_parallel: True
+reshard_after_forward: False
+weight_dtype: "bf16"
+save_with_dcp_api: False
+
+model_config:
+  dim: 5120
+  ffn_dim: 13824
+  freq_dim: 256
+  in_dim: 16
+  num_heads: 40
+  num_layers: 40
+  out_dim: 16
+  text_len": 512
+  pretrained_model_dir_or_checkpoint: "/mnt/data2/Wan2.1-T2V-14B/"
+
+scheduler_config:
+  scheduler_name: "flow_matching"
+  num_inference_steps: 50
+  shift: 7.0
+  guidance_scale: 5.0
+
+vae_config:
+  vae_path: "/mnt/data2/Wan2.1-T2V-14B/Wan2.1_VAE.pth"
+  dtype: "fp32"
+
+text_encoder_config:
+  text_len: 512
+  checkpoint_path: "/mnt/data2/Wan2.1-T2V-14B/models_t5_umt5-xxl-enc-bf16.pth"
+  text_tokenizer_path: "/mnt/data2/Wan2.1-T2V-14B/google/umt5-xxl"
+  use_fsdp: True
+```
+2. Run the script
+```
+bash scripts/infer/xpu/train_t2v_14b.sh
+```
