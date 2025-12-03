@@ -3,7 +3,7 @@ requires = ["setuptools>=61.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "torchvideo"
+name = "torchdiff"
 version = "1.0"
 description = "Video trainer and runner based on torch."
 license = { file = "LICENSE.txt" }
@@ -38,10 +38,10 @@ dev = [
 ]
 
 [tool.setuptools]
-packages = ["torchvideo"]
+packages = ["torchdiff"]
 
 [tool.setuptools.package-data]
-"torchvideo" = ["**/*.py"]
+"torchdiff" = ["**/*.py"]
 
 [tool.black]
 line-length = 88
